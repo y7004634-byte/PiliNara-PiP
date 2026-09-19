@@ -30,16 +30,39 @@ echo '[3/7] Configure local media-kit dependency overrides'
 cd "$WORK/PiliNara"
 cat > pubspec_overrides.yaml <<'EOF'
 dependency_overrides:
+  clipboard:
+    git:
+      url: https://github.com/dongfengweixiao/flutter_clipboard.git
+      ref: patch-1
+  flutter_inappwebview_android:
+    git:
+      url: https://github.com/bggRGjQaUbCoE/flutter_inappwebview.git
+      path: flutter_inappwebview_android
+      ref: v6.1.5
+  flutter_inappwebview_windows:
+    git:
+      url: https://github.com/bggRGjQaUbCoE/flutter_inappwebview.git
+      path: flutter_inappwebview_windows
+      ref: v6.1.5
   media_kit:
     path: deps/media-kit/media_kit
+  media_kit_libs_android_video:
+    path: deps/media-kit/libs/android/media_kit_libs_android_video
   media_kit_libs_ios_video:
     path: deps/media-kit/libs/ios/media_kit_libs_ios_video
   media_kit_libs_video:
     path: deps/media-kit/libs/universal/media_kit_libs_video
+  media_kit_libs_windows_video:
+    path: deps/media-kit/libs/windows/media_kit_libs_windows_video
   media_kit_native_event_loop:
     path: deps/media-kit/media_kit_native_event_loop
   media_kit_video:
     path: deps/media-kit/media_kit_video
+  cached_network_image_ce:
+    git:
+      url: https://github.com/My-Responsitories/flutter_cached_network_image_ce.git
+      path: cached_network_image
+      ref: develop
 EOF
 
 echo '[4/7] Prepare PiliNara build metadata + upstream iOS patches'
