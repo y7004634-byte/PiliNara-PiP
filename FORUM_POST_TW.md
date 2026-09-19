@@ -37,3 +37,9 @@ PiliNara 2.1.3 commit:
 ### 檔案驗證
 
 請以發布包內的 `SHA256SUMS.txt` 核對 APK / IPA。
+
+
+### 2.1.3 社群公開版 SHA-256
+
+- Android APK: `1c343976c2667f0f8a33bf505c1f845aae5918b7da76f5a8171b0fc1745bd044`
+- iOS IPA (build 5861): `02c332b23cba1c7ce720b37b772acd96bda07cfd76734940808d21c432f8a307`
