@@ -1,0 +1,29 @@
+name: Build PiliNara iOS PiP + zh-TW
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.2
+
+      - name: Build iOS PiP IPA
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          archive: false
+          name: PiliNara-iOS-PiP-zhTW
+          path: PiliNara_ios_2.1.3_PiP_zh-TW.ipa
