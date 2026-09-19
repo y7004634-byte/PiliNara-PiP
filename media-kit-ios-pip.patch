@@ -1,0 +1,254 @@
+diff --git a/media_kit_video/common/darwin/Classes/plugin/ResizableTextureProtocol.swift b/media_kit_video/common/darwin/Classes/plugin/ResizableTextureProtocol.swift
+--- a/media_kit_video/common/darwin/Classes/plugin/ResizableTextureProtocol.swift
++++ b/media_kit_video/common/darwin/Classes/plugin/ResizableTextureProtocol.swift
+@@
+ public protocol ResizableTextureProtocol: NSObject, FlutterTexture {
+   func resize(_ size: CGSize)
+   func render(_ size: CGSize)
++  var onFrameRendered: ((CVPixelBuffer) -> Void)? { get set }
+ }
+
+diff --git a/media_kit_video/common/darwin/Classes/plugin/SafeResizableTexture.swift b/media_kit_video/common/darwin/Classes/plugin/SafeResizableTexture.swift
+--- a/media_kit_video/common/darwin/Classes/plugin/SafeResizableTexture.swift
++++ b/media_kit_video/common/darwin/Classes/plugin/SafeResizableTexture.swift
+@@
+   public func copyPixelBuffer() -> Unmanaged<CVPixelBuffer>? {
+     return child.copyPixelBuffer()
+   }
+
++  public var onFrameRendered: ((CVPixelBuffer) -> Void)? {
++    get {
++      lock.lock()
++      defer { lock.unlock() }
++      return child.onFrameRendered
++    }
++    set {
++      lock.lock()
++      defer { lock.unlock() }
++      child.onFrameRendered = newValue
++    }
++  }
++
+   private func locked<T>(do block: () -> T) -> T {
+
+diff --git a/media_kit_video/common/darwin/Classes/plugin/TextureSW.swift b/media_kit_video/common/darwin/Classes/plugin/TextureSW.swift
+--- a/media_kit_video/common/darwin/Classes/plugin/TextureSW.swift
++++ b/media_kit_video/common/darwin/Classes/plugin/TextureSW.swift
+@@
+ public class TextureSW: NSObject, FlutterTexture, ResizableTextureProtocol {
+   public typealias UpdateCallback = () -> Void
+
++  public var onFrameRendered: ((CVPixelBuffer) -> Void)?
++
+@@
+     mpv_render_context_render(renderContext, &params)
+
+     textureContexts.pushAsReady(textureContext!)
++    onFrameRendered?(textureContext!.pixelBuffer)
+   }
+ }
+
+diff --git a/media_kit_video/ios/Classes/plugin/TextureHW.swift b/media_kit_video/ios/Classes/plugin/TextureHW.swift
+--- a/media_kit_video/ios/Classes/plugin/TextureHW.swift
++++ b/media_kit_video/ios/Classes/plugin/TextureHW.swift
+@@
+ public class TextureHW: NSObject, FlutterTexture, ResizableTextureProtocol {
+   public typealias UpdateCallback = () -> Void
+
++  public var onFrameRendered: ((CVPixelBuffer) -> Void)?
++
+@@
+     glFlush()
+
+     textureContexts.pushAsReady(textureContext!)
++    onFrameRendered?(textureContext!.pixelBuffer)
+   }
+
+diff --git a/media_kit_video/common/darwin/Classes/plugin/VideoOutput.swift b/media_kit_video/common/darwin/Classes/plugin/VideoOutput.swift
+--- a/media_kit_video/common/darwin/Classes/plugin/VideoOutput.swift
++++ b/media_kit_video/common/darwin/Classes/plugin/VideoOutput.swift
+@@
+   public func setSize(width: Int64?, height: Int64?) {
+     worker.enqueue {
+       self.width = width
+       self.height = height
+     }
+   }
+
++  public func setOnFrameRendered(_ callback: ((CVPixelBuffer) -> Void)?) {
++    worker.enqueue {
++      self.texture?.onFrameRendered = callback
++    }
++  }
++
+   private func _init() {
+
+diff --git a/media_kit_video/common/darwin/Classes/plugin/VideoOutputManager.swift b/media_kit_video/common/darwin/Classes/plugin/VideoOutputManager.swift
+--- a/media_kit_video/common/darwin/Classes/plugin/VideoOutputManager.swift
++++ b/media_kit_video/common/darwin/Classes/plugin/VideoOutputManager.swift
+@@
+   public func destroy(
+     handle: Int64
+   ) {
+@@
+
+     self.videoOutputs[handle] = nil
+   }
++
++  public func setOnFrameRendered(
++    handle: Int64,
++    _ callback: ((CVPixelBuffer) -> Void)?
++  ) {
++    videoOutputs[handle]?.setOnFrameRendered(callback)
++  }
+ }
+
+diff --git a/media_kit_video/common/darwin/Classes/plugin/MediaKitVideoPlugin.swift b/media_kit_video/common/darwin/Classes/plugin/MediaKitVideoPlugin.swift
+--- a/media_kit_video/common/darwin/Classes/plugin/MediaKitVideoPlugin.swift
++++ b/media_kit_video/common/darwin/Classes/plugin/MediaKitVideoPlugin.swift
+@@
+     let instance = MediaKitVideoPlugin(
+       registry: registry,
+       channel: channel,
+       utils: utils
+     )
+     registrar.addMethodCallDelegate(instance, channel: channel)
++    #if canImport(Flutter)
++      instance.pipPlugin = MediaKitPictureInPicturePlugin(
++        registrar: registrar,
++        outputManager: instance.videoOutputManager
++      )
++    #endif
+   }
+
+   private let channel: FlutterMethodChannel
+   private let videoOutputManager: VideoOutputManager
+   private let utils: UtilsProtocol?
++  #if canImport(Flutter)
++    private var pipPlugin: MediaKitPictureInPicturePlugin?
++  #endif
+
+diff --git a/media_kit_video/lib/media_kit_video.dart b/media_kit_video/lib/media_kit_video.dart
+--- a/media_kit_video/lib/media_kit_video.dart
++++ b/media_kit_video/lib/media_kit_video.dart
+@@
+ export 'package:media_kit_video/src/video_controller/video_controller.dart';
+ export 'package:media_kit_video/src/video_view_parameters.dart';
+ export 'package:media_kit_video/src/video/video.dart';
+
++export 'package:media_kit_video/src/picture_in_picture/pip_config.dart';
++export 'package:media_kit_video/src/picture_in_picture/pip_event.dart';
++export 'package:media_kit_video/src/picture_in_picture/picture_in_picture_controller.dart';
++
+ export 'package:media_kit_video/src/subtitle/subtitle_view.dart';
+
+diff --git a/media_kit_video/lib/src/video_controller/platform_video_controller.dart b/media_kit_video/lib/src/video_controller/platform_video_controller.dart
+--- a/media_kit_video/lib/src/video_controller/platform_video_controller.dart
++++ b/media_kit_video/lib/src/video_controller/platform_video_controller.dart
+@@
+ import 'package:flutter/widgets.dart';
+
+ import 'package:media_kit/media_kit.dart';
++import 'package:media_kit_video/src/picture_in_picture/picture_in_picture_controller.dart';
+ import 'package:media_kit_video/src/video_controller/android_video_controller/android_video_controller.dart';
+@@
+   /// [Rect] of the video output, received from the native implementation.
+   final ValueNotifier<Rect?> rect = ValueNotifier<Rect?>(null);
+
++  /// System Picture-in-Picture controller (iOS 15+; noop elsewhere here).
++  late final PictureInPictureController pictureInPicture =
++      PictureInPictureController.platform();
++
+   /// {@macro platform_video_controller}
+
+diff --git a/media_kit_video/lib/src/video/simple_video_texture.dart b/media_kit_video/lib/src/video/simple_video_texture.dart
+--- a/media_kit_video/lib/src/video/simple_video_texture.dart
++++ b/media_kit_video/lib/src/video/simple_video_texture.dart
+@@
+ class SimpleVideo extends StatefulWidget {
+   final Color fill;
+   final VideoController controller;
+   final double? aspectRatio;
+   final FilterQuality filterQuality;
++  final PipConfig? pip;
++  final ValueChanged<PipEvent>? onPipEvent;
+
+   const SimpleVideo({
+     super.key,
+     this.fill = Colors.black,
+     required this.controller,
+     this.aspectRatio,
+     this.filterQuality = FilterQuality.low,
++    this.pip,
++    this.onPipEvent,
+   });
+@@
+ class SimpleVideoState extends State<SimpleVideo> {
+@@
+   late final StreamSubscription<(int, int)> _subscription;
++  StreamSubscription<PipEvent>? _pipEventSubscription;
++  bool _pipAttached = false;
++  bool _pipAttachInFlight = false;
+@@
+     _subscription = widget.controller.player.stream.size.listen((value) {
+       final visible = value.$1 > 0 && value.$2 > 0;
+@@
+         widget.controller.rect.notifyListeners();
+       }
++      _maybeAttachPictureInPicture();
+     });
++    if (widget.pip != null) {
++      _initPictureInPicture();
++    }
+   }
+
++  Future<void> _initPictureInPicture() async {
++    final pipController = widget.controller.pictureInPicture;
++    if (!await pipController.isSupported()) return;
++    _pipEventSubscription = pipController.events.listen((event) {
++      widget.onPipEvent?.call(event);
++      if (event is PipSetPlaying) {
++        event.playing
++            ? widget.controller.player.play()
++            : widget.controller.player.pause();
++      } else if (event is PipClosed) {
++        widget.controller.player.pause();
++      }
++    });
++    await _maybeAttachPictureInPicture();
++  }
++
++  Future<void> _maybeAttachPictureInPicture() async {
++    if (_pipAttached || _pipAttachInFlight) return;
++    final config = widget.pip;
++    if (config == null) return;
++    final player = widget.controller.player;
++    final width = player.state.width;
++    final height = player.state.height;
++    if (width <= 0 || height <= 0) return;
++    final pipController = widget.controller.pictureInPicture;
++    if (!await pipController.isSupported()) return;
++    _pipAttachInFlight = true;
++    try {
++      await pipController.start(
++        handle: player.handle,
++        videoSize: config.preferredSize ??
++            Size(width.toDouble(), height.toDouble()),
++        autoEnter: config.autoEnter,
++        startImmediately: config.startImmediately,
++      );
++      _pipAttached = true;
++    } finally {
++      _pipAttachInFlight = false;
++    }
++  }
++
+   @override
+   void dispose() {
+     _subscription.cancel();
++    _pipEventSubscription?.cancel();
++    if (_pipAttached) {
++      widget.controller.pictureInPicture.stop();
++    }
+     super.dispose();
+   }
