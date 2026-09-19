@@ -43,8 +43,16 @@ dependency_overrides:
 EOF
 
 echo '[4/7] Prepare PiliNara build metadata + upstream iOS patches'
-pwsh -File lib/scripts/build.ps1
-pwsh -File lib/scripts/patch.ps1 iOS
+(
+  # PiliNara's patch.ps1 resolves its patch files from GITHUB_WORKSPACE.
+  # The wrapper repo is the real Actions workspace, so temporarily point
+  # GITHUB_WORKSPACE at the cloned PiliNara tree only for this step.
+  export GITHUB_WORKSPACE="$WORK/PiliNara"
+  cd "$WORK/PiliNara"
+  pwsh -File lib/scripts/build.ps1
+  pwsh -File lib/scripts/patch.ps1 iOS
+)
+cd "$WORK/PiliNara"
 
 echo '[5/7] Build unsigned iOS IPA'
 flutter build ios --release --no-codesign --dart-define-from-file=pili_release.json --no-pub
