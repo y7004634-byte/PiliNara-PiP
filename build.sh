@@ -9,8 +9,14 @@ cd "$WORK"
 
 echo '[1/7] Checkout exact PiliNara/media-kit sources'
 git clone --branch 2.1.3 --depth 200 https://github.com/Starfallan/PiliNara.git PiliNara
+cd PiliNara
+git checkout --detach 994151f971bfbbb1b137975dfa471fa7a7d93c8b
+cd ..
 mkdir -p PiliNara/deps
 git clone --branch native --depth 200 https://github.com/Starfallan/media-kit.git PiliNara/deps/media-kit
+cd PiliNara/deps/media-kit
+git checkout --detach 83dc986255a260932ccf3cfa865da31956050eb2
+cd "$WORK"
 
 echo '[2/7] Apply iOS PiP source transforms'
 python3 "$ROOT/apply_source_patches.py" "$WORK/PiliNara/deps/media-kit" "$WORK/PiliNara"
