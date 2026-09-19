@@ -78,7 +78,7 @@ echo '[4/7] Prepare PiliNara build metadata + upstream iOS patches'
 cd "$WORK/PiliNara"
 
 echo '[5/7] Build unsigned iOS IPA'
-flutter build ios --release --no-codesign --dart-define-from-file=pili_release.json --no-pub
+flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5860 --dart-define-from-file=pili_release.json --no-pub
 ln -sf ./build/ios/iphoneos Payload
 find Payload/Runner.app/Frameworks -type d -name '*.framework' -exec codesign --force --sign - --preserve-metadata=identifier,entitlements {} \;
 zip -r9 PiliNara_ios_PiP_raw.ipa Payload/runner.app
