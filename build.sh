@@ -84,8 +84,9 @@ find Payload/Runner.app/Frameworks -type d -name '*.framework' -exec codesign --
 zip -r9 PiliNara_ios_PiP_raw.ipa Payload/runner.app
 
 echo '[6/7] Apply Traditional Chinese IPA patch'
-python3 -m pip install --quiet opencc-python-reimplemented
-python3 "$ROOT/patch_ipa_zh_tw.py" PiliNara_ios_PiP_raw.ipa \
+python3 -m venv "$WORK/zh-tw-venv"
+"$WORK/zh-tw-venv/bin/python" -m pip install --quiet opencc-python-reimplemented
+"$WORK/zh-tw-venv/bin/python" "$ROOT/patch_ipa_zh_tw.py" PiliNara_ios_PiP_raw.ipa \
   --output "$GITHUB_WORKSPACE/PiliNara_ios_2.1.3_PiP_zh-TW.ipa"
 
 echo '[7/7] Verify artifact'
