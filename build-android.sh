@@ -10,6 +10,7 @@ cd "$WORK"
 echo '[1/6] Checkout PiliNara 2.1.3'
 git clone --branch 2.1.3 --depth 200 https://github.com/Starfallan/PiliNara.git PiliNara
 cd PiliNara
+git checkout --detach 994151f971bfbbb1b137975dfa471fa7a7d93c8b
 
 echo '[2/6] Add local JSON settings backup/restore'
 python3 "$ROOT/apply_settings_backup_patch.py" "$WORK/PiliNara"
