@@ -153,4 +153,26 @@ replace(
     'PiliNara SimpleVideo PiP wiring',
 )
 
+
+# Main settings page: local JSON export/import for reinstall/update recovery.
+settings_view = pili/'lib/pages/setting/view.dart'
+replace(
+    settings_view,
+    "import 'package:PiliPlus/common/widgets/flutter/list_tile.dart';\n",
+    "import 'package:PiliPlus/common/widgets/flutter/list_tile.dart';\nimport 'package:PiliPlus/common/widgets/dialog/export_import.dart';\n",
+    'PiliNara settings backup dialog import',
+)
+replace(
+    settings_view,
+    "import 'package:PiliPlus/utils/extension/size_ext.dart';\n",
+    "import 'package:PiliPlus/utils/extension/size_ext.dart';\nimport 'package:PiliPlus/utils/storage.dart';\n",
+    'PiliNara settings storage import',
+)
+replace(
+    settings_view,
+    """        ListTile(\n          onTap: () => LoginPageController.switchAccountDialog(context),\n          leading: const Icon(Icons.switch_account_outlined),\n          title: Text('切换账号', style: titleStyle),\n        ),\n""",
+    """        ListTile(\n          onTap: () => showImportExportDialog<Map<String, dynamic>>(\n            context,\n            title: '全部设置',\n            onExport: GStorage.exportAllSettings,\n            onImport: GStorage.importAllJsonSettings,\n            localFileName: () => 'settings',\n          ),\n          leading: const Icon(Icons.settings_backup_restore),\n          title: Text('设置备份 / 恢复', style: titleStyle),\n          subtitle: Text(\n            '重装或更新前导出 JSON，安装后可从文件恢复',\n            style: subTitleStyle,\n          ),\n        ),\n        ListTile(\n          onTap: () => LoginPageController.switchAccountDialog(context),\n          leading: const Icon(Icons.switch_account_outlined),\n          title: Text('切换账号', style: titleStyle),\n        ),\n""",
+    'PiliNara local settings backup/restore entry',
+)
+
 print('ALL SOURCE PATCHES APPLIED')
