@@ -1,0 +1,66 @@
+diff --git a/lib/pages/setting/models/play_settings.dart b/lib/pages/setting/models/play_settings.dart
+--- a/lib/pages/setting/models/play_settings.dart
++++ b/lib/pages/setting/models/play_settings.dart
+@@
+-  if (Platform.isAndroid) ...[
++  if (Platform.isAndroid || Platform.isIOS)
+     SwitchModel(
+       title: '后台画中画',
+       subtitle: '进入后台时以小窗形式（PiP）播放',
+       leading: const Icon(Icons.picture_in_picture_outlined),
+       setKey: SettingBoxKey.autoPiP,
+       defaultVal: false,
+       onChanged: (val) {
+-        if (val && !videoPlayerServiceHandler!.enableBackgroundPlay) {
++        if (Platform.isAndroid &&
++            val &&
++            !videoPlayerServiceHandler!.enableBackgroundPlay) {
+           SmartDialog.showToast('建议开启后台音频服务');
+         }
+       },
+     ),
++  if (Platform.isAndroid) ...[
+     const SwitchModel(
+       title: '应用内小窗转后台画中画（实验性）',
+
+diff --git a/lib/plugin/pl_player/controller.dart b/lib/plugin/pl_player/controller.dart
+--- a/lib/plugin/pl_player/controller.dart
++++ b/lib/plugin/pl_player/controller.dart
+@@
+-  late final bool autoPiP = Pref.autoPiP;
++  bool get autoPiP => Pref.autoPiP;
+
+diff --git a/lib/plugin/pl_player/view/view.dart b/lib/plugin/pl_player/view/view.dart
+--- a/lib/plugin/pl_player/view/view.dart
++++ b/lib/plugin/pl_player/view/view.dart
+@@
+   @override
+   void didChangeAppLifecycleState(AppLifecycleState state) {
+-    if (!plPlayerController.continuePlayInBackground.value) {
++    final iosSystemPip =
++        Platform.isIOS && plPlayerController.autoPiP;
++    if (!plPlayerController.continuePlayInBackground.value &&
++        !iosSystemPip) {
+@@
+                         child: SimpleVideo(
+                           controller: plPlayerController.videoController!,
+                           fill: widget.fill,
+                           aspectRatio: videoFit.aspectRatio,
++                          pip: Platform.isIOS && plPlayerController.autoPiP
++                              ? const PipConfig(autoEnter: true)
++                              : null,
++                          onPipEvent: Platform.isIOS
++                              ? (event) {
++                                  final inPip = event is PipDidStart;
++                                  if (event is PipDidStart ||
++                                      event is PipDidStop ||
++                                      event is PipClosed ||
++                                      event is PipFailed) {
++                                    plPlayerController.isNativePip.value =
++                                        inPip;
++                                    plPlayerController
++                                        .handleAutoAudioOnlyPipChanged(inPip);
++                                  }
++                                }
++                              : null,
+                         ),
