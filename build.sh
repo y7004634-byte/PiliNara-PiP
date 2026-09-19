@@ -12,9 +12,10 @@ git clone --branch 2.1.3 --depth 200 https://github.com/Starfallan/PiliNara.git 
 mkdir -p PiliNara/deps
 git clone --branch native --depth 200 https://github.com/Starfallan/media-kit.git PiliNara/deps/media-kit
 
-echo '[2/7] Apply media-kit iOS PiP port'
-cd PiliNara/deps/media-kit
-git apply "$ROOT/media-kit-ios-pip.patch"
+echo '[2/7] Apply iOS PiP source transforms'
+python3 "$ROOT/apply_source_patches.py" "$WORK/PiliNara/deps/media-kit" "$WORK/PiliNara"
+
+cd "$WORK/PiliNara/deps/media-kit"
 mkdir -p media_kit_video/lib/src/picture_in_picture
 mkdir -p media_kit_video/ios/Classes/plugin/pip
 cp "$ROOT/new_files/pip_event.dart" media_kit_video/lib/src/picture_in_picture/pip_event.dart
@@ -25,9 +26,8 @@ cp "$ROOT/new_files/picture_in_picture_noop.dart" media_kit_video/lib/src/pictur
 cp "$ROOT/new_files/MediaKitPictureInPictureController.swift" media_kit_video/ios/Classes/plugin/pip/MediaKitPictureInPictureController.swift
 cp "$ROOT/new_files/MediaKitPictureInPicturePlugin.swift" media_kit_video/ios/Classes/plugin/pip/MediaKitPictureInPicturePlugin.swift
 
-echo '[3/7] Apply PiliNara PiP UI/lifecycle port'
+echo '[3/7] Configure local media-kit dependency overrides'
 cd "$WORK/PiliNara"
-git apply "$ROOT/pilinara-ios-pip.patch"
 cat > pubspec_overrides.yaml <<'EOF'
 dependency_overrides:
   media_kit:
