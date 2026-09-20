@@ -101,7 +101,21 @@ echo '[4/7] Prepare PiliNara build metadata + upstream iOS patches'
 cd "$WORK/PiliNara"
 
 echo '[5/7] Build unsigned iOS IPA'
-flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5871 --dart-define-from-file=pili_release.json --no-pub
+set +e
+flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5872 --dart-define-from-file=pili_release.json --no-pub
+flutter_status=$?
+set -e
+if [ "$flutter_status" -ne 0 ]; then
+  # Flutter/Xcode 26 may return a provisioning-team error after the unsigned
+  # Xcode compilation has already completed. This workspace is fresh, so an
+  # existing Runner.app here can only come from the current build. Accept it
+  # only when both the bundle and executable were actually produced.
+  if [ -d build/ios/iphoneos/Runner.app ] && [ -f build/ios/iphoneos/Runner.app/Runner ]; then
+    echo "[warn] flutter build returned $flutter_status after producing an unsigned Runner.app; continuing with artifact verification"
+  else
+    exit "$flutter_status"
+  fi
+fi
 ln -sf ./build/ios/iphoneos Payload
 find Payload/Runner.app/Frameworks -type d -name '*.framework' -exec codesign --force --sign - --preserve-metadata=identifier,entitlements {} \;
 zip -r9 PiliNara_ios_PiP_raw.ipa Payload/runner.app
