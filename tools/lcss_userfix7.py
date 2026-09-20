@@ -78,13 +78,11 @@ s = s[:line_end] + (
 loop = 'for row in ordered {'
 pos = s.index(loop)
 s = s[:pos] + 'for (index, row) in ordered.enumerated() {' + s[pos+len(loop):]
-task_line = '                      try Task.checkCancellation()\n'
-pos = s.index(task_line, pos)
-insert_at = pos + len(task_line)
-s = s[:insert_at] + (
+line_end = s.index('\n', pos) + 1
+s = s[:line_end] + (
     '                      let appName = row["name"] as? String ?? row["bundleID"] as? String ?? "App"\n'
     '                      store.set("正在刷新 " + appName + "…", forKey: "liveContainerAutoRefreshPhase")\n'
-) + s[insert_at:]
+) + s[line_end:]
 
 # Pass per-app index into refreshOne and update aggregate progress when an app completes.
 needle = 'try await refreshOne(row, runID: runID)'
