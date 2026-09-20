@@ -60,11 +60,11 @@ def patch_youpip(root: Path):
     %orig(pictureInPictureController, customInterval, completionHandler);
 }
 '''
-    targets = ["%hook MLPIPControllerImpl\\n", "%hook MLPIPController\\n"]
+    targets = ["%hook MLPIPControllerImpl\n", "%hook MLPIPController\n"]
     for target in targets:
         if target not in s:
             raise RuntimeError(f"{path}: hook not found: {target.strip()}")
-        s = s.replace(target, target + method + "\\n", 1)
+        s = s.replace(target, target + method + "\n", 1)
     path.write_text(s, encoding="utf-8")
 
 def patch_ytabconfig(root: Path):
