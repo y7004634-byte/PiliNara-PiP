@@ -6,8 +6,14 @@ def replace_once(text, old, new, label):
     return text.replace(old, new, 1)
 
 # ------------------------------------------------------------------
-# 1) Fix local IPA installation: copy security-scoped file into an
-#    app-owned temporary directory before the install pipeline starts.
+# 1) Fix local IPA installation v2:
+#    copy the picker URL into the shared app-group first, then pass the
+#    owned file URL directly to the embedded SideStore service.
+#
+#    userfix7 used a security-scoped bookmark + UserDefaults token.
+#    On the combined LC+SS build the service can miss/resolve that token
+#    as invalidRequest (V3SideStoreServiceError code 1) before the real
+#    installation pipeline starts. This removes that fragile handoff.
 # ------------------------------------------------------------------
 p = Path("builder/scripts/templates/v3_headless_runtime.swift")
 s = p.read_text(encoding="utf-8")
@@ -15,32 +21,14 @@ s = p.read_text(encoding="utf-8")
 start = s.index('        if kind == "installSharedIPA" {')
 end = s.index('        guard let url = URL(string: target)', start)
 install_block = r'''        if kind == "installSharedIPA" {
-            guard UUID(uuidString: target) != nil, let group = Bundle.main.altstoreAppGroup,
-                  let defaults = UserDefaults(suiteName: group),
-                  let bookmark = defaults.data(forKey: "V3SharedIPA." + target) else {
-                throw V3SideStoreServiceError.invalidRequest
+            guard let ownedURL = URL(string: target),
+                  ownedURL.isFileURL,
+                  ownedURL.pathExtension.lowercased() == "ipa" else {
+                throw OperationError.invalidParameters("Staged IPA URL is invalid.")
             }
-            defaults.removeObject(forKey: "V3SharedIPA." + target)
-            var stale = false
-            let sourceURL = try URL(resolvingBookmarkData: bookmark, options: .withoutUI,
-                                    relativeTo: nil, bookmarkDataIsStale: &stale)
-            guard !stale, sourceURL.isFileURL, sourceURL.pathExtension.lowercased() == "ipa" else {
-                throw V3SideStoreServiceError.invalidRequest
+            guard FileManager.default.fileExists(atPath: ownedURL.path) else {
+                throw OperationError.appNotFound(name: ownedURL.lastPathComponent)
             }
-
-            // The document picker URL is security-scoped. Copy it while access is
-            // active so the later asynchronous SideStore install pipeline does not
-            // lose permission after this resolver returns.
-            let scoped = sourceURL.startAccessingSecurityScopedResource()
-            defer { if scoped { sourceURL.stopAccessingSecurityScopedResource() } }
-            guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-                throw OperationError.appNotFound(name: sourceURL.lastPathComponent)
-            }
-            let stagingDirectory = FileManager.default.uniqueTemporaryURL()
-            try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
-            let filename = sourceURL.lastPathComponent.isEmpty ? "App.ipa" : sourceURL.lastPathComponent
-            let ownedURL = stagingDirectory.appendingPathComponent(filename)
-            try FileManager.default.copyItem(at: sourceURL, to: ownedURL)
             return try await ipaTarget(url: ownedURL, scoped: false)
         }
 '''
@@ -56,6 +44,69 @@ new = '''        let failure = CombinedFailure.capture(error, operation: kind, s
                 "message": error.localizedDescription]
 '''
 s = replace_once(s, old, new, "detailed install failure")
+p.write_text(s, encoding="utf-8")
+
+# Stage the selected IPA into the LiveContainer/SideStore shared app-group
+# while the document-picker security scope is still active.
+p = Path("builder/scripts/templates/v3_unified_shell.swift")
+s = p.read_text(encoding="utf-8")
+old = '''    func stageSharedIPA(_ url: URL, bookmark: Data? = nil, title: String) {
+        guard presentation == nil else { return }
+        do {
+            guard url.isFileURL, url.pathExtension.lowercased() == "ipa" else {
+                throw NSError(domain: "V3IPASelection", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Choose an IPA file to install with SideStore. Other files cannot be installed."])
+            }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let token = UUID().uuidString
+            let data = try bookmark ?? url.bookmarkData(options: URL.BookmarkCreationOptions(rawValue: 1 << 11),
+                                                       includingResourceValuesForKeys: nil, relativeTo: nil)
+            LCUtils.appGroupUserDefault.set(data, forKey: "V3SharedIPA." + token)
+            perform("installSharedIPA", target: token, title: title)
+        } catch { self.error = error.localizedDescription }
+    }
+'''
+new = '''    func stageSharedIPA(_ url: URL, bookmark: Data? = nil, title: String) {
+        guard presentation == nil else { return }
+        do {
+            guard url.isFileURL, url.pathExtension.lowercased() == "ipa" else {
+                throw NSError(domain: "V3IPASelection", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "請選擇 IPA 檔案。其他格式無法安裝。"])
+            }
+
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+            guard let groupRoot = LCSharedUtils.appGroupPath() else {
+                throw NSError(domain: "V3IPAStaging", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "無法存取 LC+SS 共用 App Group，IPA 無法暫存。"])
+            }
+
+            let inbox = groupRoot
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Caches", isDirectory: true)
+                .appendingPathComponent("V3SharedIPAInbox", isDirectory: true)
+            try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+
+            let token = UUID().uuidString
+            let ownedURL = inbox.appendingPathComponent(token).appendingPathExtension("ipa")
+            if FileManager.default.fileExists(atPath: ownedURL.path) {
+                try FileManager.default.removeItem(at: ownedURL)
+            }
+            try FileManager.default.copyItem(at: url, to: ownedURL)
+
+            let values = try ownedURL.resourceValues(forKeys: [.fileSizeKey])
+            guard (values.fileSize ?? 0) > 0 else {
+                throw NSError(domain: "V3IPAStaging", code: 3,
+                              userInfo: [NSLocalizedDescriptionKey: "IPA 暫存失敗：複製後檔案大小為 0。"])
+            }
+
+            perform("installSharedIPA", target: ownedURL.absoluteString, title: title)
+        } catch { self.error = error.localizedDescription }
+    }
+'''
+s = replace_once(s, old, new, "shared IPA host staging")
 p.write_text(s, encoding="utf-8")
 
 # ------------------------------------------------------------------
