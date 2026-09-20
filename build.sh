@@ -32,6 +32,19 @@ cp "$ROOT/new_files/picture_in_picture_noop.dart" media_kit_video/lib/src/pictur
 cp "$ROOT/new_files/MediaKitPictureInPictureController.swift" media_kit_video/ios/Classes/plugin/pip/MediaKitPictureInPictureController.swift
 cp "$ROOT/new_files/MediaKitPictureInPicturePlugin.swift" media_kit_video/ios/Classes/plugin/pip/MediaKitPictureInPicturePlugin.swift
 
+echo '[2b/7] Apply PiliNara QoL feature set'
+cd "$WORK/PiliNara"
+mkdir -p lib/pages/video/export
+mkdir -p lib/pages/video/widgets
+mkdir -p lib/plugin/pl_player/view
+mkdir -p lib/utils
+cp "$ROOT/new_files/full_danmaku_sheet.dart" lib/pages/video/widgets/full_danmaku_sheet.dart
+cp "$ROOT/new_files/playback_diagnostics_hud.dart" lib/plugin/pl_player/view/playback_diagnostics_hud.dart
+cp "$ROOT/new_files/universal_media_export.dart" lib/pages/video/export/universal_media_export.dart
+cp "$ROOT/new_files/pilinara_native_bridge.dart" lib/utils/pilinara_native_bridge.dart
+cp "$ROOT/new_files/PiliNaraNativeBridge.swift" ios/Runner/PiliNaraNativeBridge.swift
+python3 "$ROOT/apply_qol_patches.py" "$WORK/PiliNara"
+
 echo '[3/7] Configure local media-kit dependency overrides'
 cd "$WORK/PiliNara"
 cat > pubspec_overrides.yaml <<'EOF'
@@ -84,7 +97,7 @@ echo '[4/7] Prepare PiliNara build metadata + upstream iOS patches'
 cd "$WORK/PiliNara"
 
 echo '[5/7] Build unsigned iOS IPA'
-flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5863 --dart-define-from-file=pili_release.json --no-pub
+flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5864 --dart-define-from-file=pili_release.json --no-pub
 ln -sf ./build/ios/iphoneos Payload
 find Payload/Runner.app/Frameworks -type d -name '*.framework' -exec codesign --force --sign - --preserve-metadata=identifier,entitlements {} \;
 zip -r9 PiliNara_ios_PiP_raw.ipa Payload/runner.app
