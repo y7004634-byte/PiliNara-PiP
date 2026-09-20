@@ -2,6 +2,10 @@ name: Build PiliNara iOS PiP + zh-TW
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'build.sh'
 
 jobs:
   build:
