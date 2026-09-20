@@ -96,34 +96,16 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          # 1) Route the global/manual/background refresh bridge through the v3
-          #    headless service, rather than PrivateIntentRunner/AppIntents.
+          # 1) Replace the legacy PrivateIntentRunner/AppIntent bridge with the
+          #    already-proven v3 headless service route.
           p = Path("builder/scripts/patch_livecontainer_autorefresh.py")
           s = p.read_text(encoding="utf-8")
-          old = r'''BRIDGE = r'''
-          # LC_REFRESH_BRIDGE_V2_BEGIN
-          /// Use the action identity present in the combined package's intent metadata.
-          public enum LiveContainerRefreshBridge {
-              public static func refreshAllApps() async throws {
-                  guard #available(iOS 17.0, *) else {
-                      throw NSError(domain: "LiveContainerRefresh.UnsupportedOS", code: 17,
-                          userInfo: [NSLocalizedDescriptionKey: "The embedded automatic refresh bridge requires iOS 17 or later."])
-                  }
-                  try Task.checkCancellation()
-                  try await RefreshHandler.shared.startRefresh(
-                      identifier: "RefreshAllIntent",
-                      mangledName: "16SideStoreSupport20RefreshAllAppsIntentV"
-                  )
-                  try Task.checkCancellation()
-              }
-          }
-          // LC_REFRESH_BRIDGE_V2_END
-          ''''''
-          new = r'''BRIDGE = r'''
+          a = s.index("BRIDGE = r'''")
+          b = s.index("\n\n\ndef die", a)
+          bridge = """BRIDGE = r'''
           // LC_REFRESH_BRIDGE_V2_BEGIN
           /// v3 userfix2: run refreshes through the proven headless SideStore service.
-          /// Non-host apps run first; the LiveContainer host runs last because replacing
-          /// the host can terminate/relaunch the foreground process.
+          /// Non-host apps run first; the LiveContainer host runs last.
           public enum LiveContainerRefreshBridge {
               public static func refreshAllApps() async throws {
                   guard #available(iOS 17.0, *) else {
@@ -205,20 +187,18 @@ jobs:
               }
           }
           // LC_REFRESH_BRIDGE_V2_END
-          ''''''
-          if old not in s:
-              raise SystemExit("userfix2 bridge anchor not found")
-          p.write_text(s.replace(old, new, 1), encoding="utf-8")
+          '''"""
+          s = s[:a] + bridge + s[b:]
+          p.write_text(s, encoding="utf-8")
 
-          # 2) Allow the host to use refreshApp and make targeted refresh emit the
-          #    same verified manifest/host-handoff state expected by the scheduler.
+          # 2) Let refreshApp handle the LiveContainer host and emit the same
+          #    verification/host-handoff state the scheduler already knows how to verify.
           p = Path("builder/scripts/templates/v3_headless_runtime.swift")
           s = p.read_text(encoding="utf-8")
           guard = '            guard app.isActive, app.bundleIdentifier != StoreApp.altstoreAppID else { throw V3SideStoreServiceError.unsupported }\n'
           if guard not in s:
               raise SystemExit("userfix2 host guard anchor not found")
-          s = s.replace(guard,
-              '            guard app.isActive else { throw V3SideStoreServiceError.unsupported }\\n', 1)
+          s = s.replace(guard, '            guard app.isActive else { throw V3SideStoreServiceError.unsupported }\\n', 1)
 
           anchor = '''    private struct V3OpDriver: @unchecked Sendable {
           '''
@@ -314,7 +294,6 @@ jobs:
           grep -Fq 'prepareHostHandoffIfNeeded' builder/scripts/templates/v3_headless_runtime.swift
           grep -Fq 'LiveContainerRefreshManifestV2' builder/scripts/templates/v3_headless_runtime.swift
 
-      # Fail on generated Swift/configuration errors BEFORE compiling Rust/iOS.
       - name: Apply and verify host integration
         shell: bash
         run: |
