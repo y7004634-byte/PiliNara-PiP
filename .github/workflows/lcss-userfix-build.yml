@@ -444,12 +444,77 @@ jobs:
           p.write_text(s, encoding="utf-8")
 
           print("userfix5 builder patch applied")
+          # 6) The current SideStore .refresh pipeline refreshes provisioning
+          #    profiles in-place; it does NOT self-reinstall the host app. Therefore
+          #    host-handoff/relaunch verification is incorrect for this route.
+          #    Remove that legacy state and verify the headless operation result directly.
+          p = Path("builder/scripts/patch_livecontainer_autorefresh.py")
+          s = p.read_text(encoding="utf-8")
+          s = s.replace(
+              '''                      if row["isHost"] as? Bool == true {
+                          prepareHostHandoff(row: row, runID: runID)
+                      }
+''',
+              '',
+              1
+          )
+          s = s.replace(
+              '"host_handoff": defaults().bool(forKey: "liveContainerAutoRefreshHostHandoff")',
+              '"host_handoff": false',
+              1
+          )
+          bridge_anchor = '''                  let store = defaults()
+                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+'''
+          bridge_repl = '''                  let store = defaults()
+                  store.set(false, forKey: "liveContainerAutoRefreshHostHandoff")
+                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffRunID")
+                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffStartedAt")
+                  store.removeObject(forKey: "liveContainerAutoRefreshHostPreviousExpiration")
+                  store.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")
+                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+'''
+          if bridge_anchor not in s:
+              raise SystemExit("userfix6 bridge cleanup anchor not found")
+          s = s.replace(bridge_anchor, bridge_repl, 1)
+          p.write_text(s, encoding="utf-8")
+
+          p = Path("builder/scripts/templates/v3_headless_runtime.swift")
+          s = p.read_text(encoding="utf-8")
+          s = s.replace('                    self.prepareHostHandoffIfNeeded(app)\n', '', 1)
+          p.write_text(s, encoding="utf-8")
+
+          p = Path("builder/scripts/templates/livecontainer_refresh_scheduler.swift")
+          s = p.read_text(encoding="utf-8")
+          register_anchor = '''        hostBundle = Bundle.main
+          '''
+          register_repl = '''        hostBundle = Bundle.main
+                  // userfix6: the headless .refresh route updates provisioning profiles
+                  // in-place and does not replace/relaunch the host app.
+                  defaults.set(false, forKey: hostHandoffKey)
+                  defaults.removeObject(forKey: hostHandoffRunKey)
+                  defaults.removeObject(forKey: hostHandoffStartedKey)
+                  defaults.removeObject(forKey: hostPreviousExpirationKey)
+                  defaults.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")
+                  if defaults.string(forKey: healthStateKey)?.hasPrefix("HOST_REFRESH_") == true {
+                      defaults.set("IDLE", forKey: healthStateKey)
+                      defaults.removeObject(forKey: lastErrorKey)
+                  }
+          '''
+          if register_anchor not in s:
+              raise SystemExit("userfix6 scheduler register anchor not found")
+          s = s.replace(register_anchor, register_repl, 1)
+          p.write_text(s, encoding="utf-8")
+
+          print("userfix6 in-place host refresh patch applied")
           PY
 
           grep -Fq 'v3 userfix3: use the proven headless service' builder/scripts/patch_livecontainer_autorefresh.py
           grep -Fq 'prepareHostHandoffIfNeeded' builder/scripts/templates/v3_headless_runtime.swift
           grep -Fq 'LCRefreshRunID' work/EmbeddedSideStore/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift
           grep -Fq 'runMarkerMatched' builder/scripts/templates/livecontainer_refresh_scheduler.swift
+          grep -Fq '"host_handoff": false' builder/scripts/patch_livecontainer_autorefresh.py
+          grep -Fq 'userfix6: the headless .refresh route updates provisioning profiles' builder/scripts/templates/livecontainer_refresh_scheduler.swift
 
       - name: Apply and verify host integration
         shell: bash
