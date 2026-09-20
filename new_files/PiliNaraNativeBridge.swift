@@ -2,18 +2,18 @@ import AVFoundation
 import Flutter
 import Foundation
 
-final class PiliNaraNativeBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
+final class PiliNaraNativeBridge: NSObject, FlutterStreamHandler {
   private var thermalEventSink: FlutterEventSink?
 
-  static func register(with registrar: FlutterPluginRegistrar) {
+  static func register(messenger: FlutterBinaryMessenger) {
     let instance = PiliNaraNativeBridge()
     let method = FlutterMethodChannel(
       name: "com.pilinara.tw/native",
-      binaryMessenger: registrar.messenger()
+      binaryMessenger: messenger
     )
     let thermal = FlutterEventChannel(
       name: "com.pilinara.tw/thermal",
-      binaryMessenger: registrar.messenger()
+      binaryMessenger: messenger
     )
     registrar.addMethodCallDelegate(instance, channel: method)
     thermal.setStreamHandler(instance)
