@@ -102,7 +102,7 @@ cd "$WORK/PiliNara"
 
 echo '[5/7] Build unsigned iOS IPA'
 set +e
-flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5873 --dart-define-from-file=pili_release.json --no-pub
+flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5874 --dart-define-from-file=pili_release.json --no-pub
 flutter_status=$?
 set -e
 
