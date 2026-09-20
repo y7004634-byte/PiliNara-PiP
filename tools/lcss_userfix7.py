@@ -65,68 +65,65 @@ p.write_text(s, encoding="utf-8")
 p = Path("builder/scripts/patch_livecontainer_autorefresh.py")
 s = p.read_text(encoding="utf-8")
 
-s = replace_once(
-    s,
-    '                  store.set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")\n',
-    '                  store.set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")\n'
+# Insert progress initialization after the expected-ID list is computed.
+needle = 'let expected = ordered.compactMap'
+pos = s.index(needle)
+line_end = s.index('\n', pos) + 1
+s = s[:line_end] + (
     '                  store.set(0.0, forKey: "liveContainerAutoRefreshProgress")\n'
-    '                  store.set("準備刷新…", forKey: "liveContainerAutoRefreshPhase")\n',
-    "refresh progress init"
-)
+    '                  store.set("準備刷新…", forKey: "liveContainerAutoRefreshPhase")\n'
+) + s[line_end:]
 
-s = replace_once(
-    s,
-    '                  for row in ordered {\n                      try Task.checkCancellation()\n',
-    '                  for (index, row) in ordered.enumerated() {\n'
-    '                      try Task.checkCancellation()\n'
+# Convert the app loop to enumerated() and publish the phase.
+loop = '                  for row in ordered {'
+pos = s.index(loop)
+s = s[:pos] + '                  for (index, row) in ordered.enumerated() {' + s[pos+len(loop):]
+task_line = '                      try Task.checkCancellation()\n'
+pos = s.index(task_line, pos)
+insert_at = pos + len(task_line)
+s = s[:insert_at] + (
     '                      let appName = row["name"] as? String ?? row["bundleID"] as? String ?? "App"\n'
-    '                      store.set("正在刷新 " + appName + "…", forKey: "liveContainerAutoRefreshPhase")\n',
-    "aggregate refresh loop"
-)
+    '                      store.set("正在刷新 " + appName + "…", forKey: "liveContainerAutoRefreshPhase")\n'
+) + s[insert_at:]
 
-s = replace_once(
-    s,
-    '                      try await refreshOne(row, runID: runID)\n',
-    '                      try await refreshOne(row, runID: runID, index: index, total: ordered.count)\n'
+# Pass per-app index into refreshOne and update aggregate progress when an app completes.
+needle = 'try await refreshOne(row, runID: runID)'
+pos = s.index(needle)
+s = s[:pos] + 'try await refreshOne(row, runID: runID, index: index, total: ordered.count)' + s[pos+len(needle):]
+line_end = s.index('\n', pos) + 1
+s = s[:line_end] + (
     '                      store.set(Double(index + 1) / Double(max(ordered.count, 1)),\n'
-    '                                forKey: "liveContainerAutoRefreshProgress")\n',
-    "refreshOne progress args"
-)
+    '                                forKey: "liveContainerAutoRefreshProgress")\n'
+) + s[line_end:]
 
-s = replace_once(
-    s,
-    '                      persistManifest(runID: runID, expected: expected, results: results)\n'
-    '                  }\n'
-    '                  try Task.checkCancellation()\n',
-    '                      persistManifest(runID: runID, expected: expected, results: results)\n'
-    '                  }\n'
+# Add completion state immediately after the loop, before the final cancellation check.
+needle = '                  try Task.checkCancellation()\n              }\n\n              private static func persistManifest'
+pos = s.index(needle)
+replacement = (
     '                  store.set(1.0, forKey: "liveContainerAutoRefreshProgress")\n'
     '                  store.set("刷新完成", forKey: "liveContainerAutoRefreshPhase")\n'
-    '                  try Task.checkCancellation()\n',
-    "refresh completion progress"
+    + needle
 )
+s = s[:pos] + replacement + s[pos+len(needle):]
 
-s = replace_once(
-    s,
-    '              private static func refreshOne(_ row: [String: Any], runID: String) async throws {\n',
-    '              private static func refreshOne(_ row: [String: Any], runID: String,\n'
-    '                                             index: Int, total: Int) async throws {\n',
-    "refreshOne signature"
-)
+# Add index/total to refreshOne.
+needle = 'private static func refreshOne(_ row: [String: Any], runID: String) async throws {'
+pos = s.index(needle)
+replacement = 'private static func refreshOne(_ row: [String: Any], runID: String, index: Int, total: Int) async throws {'
+s = s[:pos] + replacement + s[pos+len(needle):]
 
-s = replace_once(
-    s,
-    '                      let state = reply["state"] as? String ?? "working"\n'
-    '                      switch state {\n',
-    '                      let state = reply["state"] as? String ?? "working"\n'
+# Publish live per-operation progress during opPoll.
+needle = '                      let state = reply["state"] as? String ?? "working"\n'
+pos = s.index(needle)
+insert_at = pos + len(needle)
+s = s[:insert_at] + (
     '                      if let appProgress = reply["progress"] as? Double {\n'
     '                          let clamped = min(max(appProgress, 0.0), 1.0)\n'
     '                          let combined = (Double(index) + clamped) / Double(max(total, 1))\n'
     '                          defaults().set(combined, forKey: "liveContainerAutoRefreshProgress")\n'
     '                      }\n'
-    '                      switch state {\n',
-    "poll progress"
-)
+) + s[insert_at:]
+
 p.write_text(s, encoding="utf-8")
 
 # ------------------------------------------------------------------
