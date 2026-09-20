@@ -429,6 +429,21 @@ replace_between(
     "replace current-render danmaku pool with full-video list",
 )
 
+replace(
+    header,
+    """                    Get.back();
+                    showDanmakuPool();
+""",
+    """                    Get.back();
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        showDanmakuPool();
+                      }
+                    });
+""",
+    "defer full danmaku sheet until menu closes",
+)
+
 insert_before(
     header,
     """                if (plPlayerController.videoPlayerController != null &&
@@ -440,13 +455,16 @@ insert_before(
                     dense: true,
                     onTap: () {
                       Get.back();
-                      UniversalMediaExport.show(
-                        context,
-                        controller: videoDetailCtr,
-                        title:
-                            introController.videoDetail.value.title ??
-                            videoDetailCtr.bvid,
-                      );
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        UniversalMediaExport.show(
+                          context,
+                          controller: videoDetailCtr,
+                          title:
+                              introController.videoDetail.value.title ??
+                              videoDetailCtr.bvid,
+                        );
+                      });
                     },
                     leading: const Icon(
                       Icons.download_for_offline_outlined,
@@ -574,7 +592,8 @@ replace(
 
     // Thermal adaptation changes only render output; source/decode stays intact.
     if (Pref.smartThermalRender) {
-      final thermalFactor = switch (_iosThermalState) {
+      final thermalState = PiliNaraNativeBridge.latestThermalState;
+      final thermalFactor = switch (thermalState) {
         IosThermalState.nominal => 1.0,
         IosThermalState.fair => 0.90,
         IosThermalState.serious => 0.75,
@@ -612,18 +631,17 @@ insert_before(
         if (isFullScreen &&
             widget.introController?.isShowOnlineTotal == true)
           Positioned(
-            left: MediaQuery.viewPaddingOf(context).left + 14,
-            bottom: MediaQuery.viewPaddingOf(context).bottom + 49,
+            left: 10,
+            bottom: 10,
             child: IgnorePointer(
               child: Obx(
                 () => Text(
                   '${widget.introController!.total.value}人正在看',
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11.5,
+                    color: Color(0x99FFFFFF),
+                    fontSize: 10.5,
                     shadows: [
-                      Shadow(color: Colors.black, blurRadius: 3),
-                      Shadow(color: Colors.black, blurRadius: 6),
+                      Shadow(color: Color(0x66000000), blurRadius: 3),
                     ],
                   ),
                 ),
@@ -640,6 +658,165 @@ insert_before(
 
 """,
     "fullscreen online count and diagnostics overlay",
+)
+
+
+
+# Persistent MP4/M4A library inside the existing Offline Cache page.
+download_view = pili / "lib/pages/download/view.dart"
+replace(
+    download_view,
+    "import 'package:PiliPlus/pages/download/detail/widgets/item.dart';\n",
+    """import 'package:PiliPlus/pages/download/detail/widgets/item.dart';
+import 'package:PiliPlus/pages/download/universal_export_view.dart';
+""",
+    "offline cache universal export import",
+)
+
+replace(
+    download_view,
+    """enum _DownloadTab {
+  videos('全部视频'),
+  folders('文件夹')
+  ;
+""",
+    """enum _DownloadTab {
+  videos('全部视频'),
+  folders('文件夹'),
+  universal('通用档案')
+  ;
+""",
+    "offline cache universal tab enum",
+)
+
+replace(
+    download_view,
+    """      final currentTab = _DownloadTab.values[_tabIndex];
+      final isVideoTab = currentTab == _DownloadTab.videos;
+      final MultiSelectBase activeMultiSelectCtr = isVideoTab
+          ? _controller
+          : _folderSelectController;
+      final enableMultiSelect = isVideoTab
+          ? _controller.enableMultiSelect.value
+          : _folderSelectController.enableMultiSelect.value;
+""",
+    """      final currentTab = _DownloadTab.values[_tabIndex];
+      final isVideoTab = currentTab == _DownloadTab.videos;
+      final isFolderTab = currentTab == _DownloadTab.folders;
+      final MultiSelectBase activeMultiSelectCtr = isFolderTab
+          ? _folderSelectController
+          : _controller;
+      final enableMultiSelect = isVideoTab
+          ? _controller.enableMultiSelect.value
+          : isFolderTab
+          ? _folderSelectController.enableMultiSelect.value
+          : false;
+""",
+    "offline cache universal tab multiselect routing",
+)
+
+replace(
+    download_view,
+    """            actions: isVideoTab
+                ? [
+""",
+    """            actions: isVideoTab
+                ? [
+""",
+    "offline cache actions anchor check",
+)
+
+replace(
+    download_view,
+    """                  ]
+                : Platform.isAndroid
+                ? [
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: _folderSelectController.checkedCount == 0
+                          ? null
+                          : _exportSelectedFolders,
+                      child: const Text('导出'),
+                    ),
+                  ]
+                : null,
+""",
+    """                  ]
+                : isFolderTab && Platform.isAndroid
+                ? [
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: _folderSelectController.checkedCount == 0
+                          ? null
+                          : _exportSelectedFolders,
+                      child: const Text('导出'),
+                    ),
+                  ]
+                : null,
+""",
+    "offline cache universal tab action bar",
+)
+
+replace(
+    download_view,
+    """                if (isVideoTab) ...[
+""",
+    """                if (isVideoTab) ...[
+""",
+    "offline cache video action anchor check",
+)
+
+replace(
+    download_view,
+    """                ] else ...[
+                  IconButton(
+                    tooltip: '新建文件夹',
+""",
+    """                ] else if (isFolderTab) ...[
+                  IconButton(
+                    tooltip: '新建文件夹',
+""",
+    "offline cache hide folder actions on universal tab",
+)
+
+replace(
+    download_view,
+    """                  Tab(
+                    child: Obx(
+                      () => Text('文件夹(${_controller.folders.length})'),
+                    ),
+                  ),
+                ],
+""",
+    """                  Tab(
+                    child: Obx(
+                      () => Text('文件夹(${_controller.folders.length})'),
+                    ),
+                  ),
+                  const Tab(text: '通用档案'),
+                ],
+""",
+    "offline cache universal tab header",
+)
+
+replace(
+    download_view,
+    """                  children: [
+                    _buildAllVideosTab(),
+                    _buildFoldersTab(),
+                  ],
+""",
+    """                  children: [
+                    _buildAllVideosTab(),
+                    _buildFoldersTab(),
+                    const UniversalExportView(),
+                  ],
+""",
+    "offline cache universal tab content",
 )
 
 print("ALL QOL PATCHES APPLIED")
