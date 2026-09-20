@@ -386,3 +386,5 @@ for a,b in mapping.items():
 p.write_text(s,encoding="utf-8")
 
 print("userfix7 applied: Home refresh/progress, shared IPA staging, detailed errors, zh-Hant UI")
+
+# userfix8 build trigger
