@@ -65,71 +65,68 @@ p.write_text(s, encoding="utf-8")
 p = Path("builder/scripts/patch_livecontainer_autorefresh.py")
 s = p.read_text(encoding="utf-8")
 
-old = '''                  let expected = ordered.compactMap { $0["bundleID"] as? String }
-                  store.set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")
-                  var results: [[String: Any]] = []
-                  persistManifest(runID: runID, expected: expected, results: results)
+s = replace_once(
+    s,
+    '                  store.set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")\n',
+    '                  store.set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")\n'
+    '                  store.set(0.0, forKey: "liveContainerAutoRefreshProgress")\n'
+    '                  store.set("準備刷新…", forKey: "liveContainerAutoRefreshPhase")\n',
+    "refresh progress init"
+)
 
-                  for row in ordered {
-                      try Task.checkCancellation()
-'''
-new = '''                  let expected = ordered.compactMap { $0["bundleID"] as? String }
-                  store.set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")
-                  store.set(0.0, forKey: "liveContainerAutoRefreshProgress")
-                  store.set("準備刷新…", forKey: "liveContainerAutoRefreshPhase")
-                  var results: [[String: Any]] = []
-                  persistManifest(runID: runID, expected: expected, results: results)
+s = replace_once(
+    s,
+    '                  for row in ordered {\n                      try Task.checkCancellation()\n',
+    '                  for (index, row) in ordered.enumerated() {\n'
+    '                      try Task.checkCancellation()\n'
+    '                      let appName = row["name"] as? String ?? row["bundleID"] as? String ?? "App"\n'
+    '                      store.set("正在刷新 " + appName + "…", forKey: "liveContainerAutoRefreshPhase")\n',
+    "aggregate refresh loop"
+)
 
-                  for (index, row) in ordered.enumerated() {
-                      try Task.checkCancellation()
-                      let appName = row["name"] as? String ?? row["bundleID"] as? String ?? "App"
-                      store.set("正在刷新 " + appName + "…", forKey: "liveContainerAutoRefreshPhase")
-'''
-s = replace_once(s, old, new, "aggregate refresh loop")
+s = replace_once(
+    s,
+    '                      try await refreshOne(row, runID: runID)\n',
+    '                      try await refreshOne(row, runID: runID, index: index, total: ordered.count)\n'
+    '                      store.set(Double(index + 1) / Double(max(ordered.count, 1)),\n'
+    '                                forKey: "liveContainerAutoRefreshProgress")\n',
+    "refreshOne progress args"
+)
 
-old = '''                      try await refreshOne(row, runID: runID)
+s = replace_once(
+    s,
+    '                      persistManifest(runID: runID, expected: expected, results: results)\n'
+    '                  }\n'
+    '                  try Task.checkCancellation()\n',
+    '                      persistManifest(runID: runID, expected: expected, results: results)\n'
+    '                  }\n'
+    '                  store.set(1.0, forKey: "liveContainerAutoRefreshProgress")\n'
+    '                  store.set("刷新完成", forKey: "liveContainerAutoRefreshPhase")\n'
+    '                  try Task.checkCancellation()\n',
+    "refresh completion progress"
+)
 
-                      guard let bundleID = row["bundleID"] as? String else { continue }
-'''
-new = '''                      try await refreshOne(row, runID: runID, index: index, total: ordered.count)
-                      store.set(Double(index + 1) / Double(max(ordered.count, 1)),
-                                forKey: "liveContainerAutoRefreshProgress")
+s = replace_once(
+    s,
+    '              private static func refreshOne(_ row: [String: Any], runID: String) async throws {\n',
+    '              private static func refreshOne(_ row: [String: Any], runID: String,\n'
+    '                                             index: Int, total: Int) async throws {\n',
+    "refreshOne signature"
+)
 
-                      guard let bundleID = row["bundleID"] as? String else { continue }
-'''
-s = replace_once(s, old, new, "refreshOne progress args")
-
-old = '''                  try Task.checkCancellation()
-              }
-
-              private static func persistManifest'''
-new = '''                  store.set(1.0, forKey: "liveContainerAutoRefreshProgress")
-                  store.set("刷新完成", forKey: "liveContainerAutoRefreshPhase")
-                  try Task.checkCancellation()
-              }
-
-              private static func persistManifest'''
-s = replace_once(s, old, new, "refresh completion progress")
-
-old = '''              private static func refreshOne(_ row: [String: Any], runID: String) async throws {
-'''
-new = '''              private static func refreshOne(_ row: [String: Any], runID: String,
-                                             index: Int, total: Int) async throws {
-'''
-s = replace_once(s, old, new, "refreshOne signature")
-
-old = '''                      let state = reply["state"] as? String ?? "working"
-                      switch state {
-'''
-new = '''                      let state = reply["state"] as? String ?? "working"
-                      if let appProgress = reply["progress"] as? Double {
-                          let clamped = min(max(appProgress, 0.0), 1.0)
-                          let combined = (Double(index) + clamped) / Double(max(total, 1))
-                          defaults().set(combined, forKey: "liveContainerAutoRefreshProgress")
-                      }
-                      switch state {
-'''
-s = replace_once(s, old, new, "poll progress")
+s = replace_once(
+    s,
+    '                      let state = reply["state"] as? String ?? "working"\n'
+    '                      switch state {\n',
+    '                      let state = reply["state"] as? String ?? "working"\n'
+    '                      if let appProgress = reply["progress"] as? Double {\n'
+    '                          let clamped = min(max(appProgress, 0.0), 1.0)\n'
+    '                          let combined = (Double(index) + clamped) / Double(max(total, 1))\n'
+    '                          defaults().set(combined, forKey: "liveContainerAutoRefreshProgress")\n'
+    '                      }\n'
+    '                      switch state {\n',
+    "poll progress"
+)
 p.write_text(s, encoding="utf-8")
 
 # ------------------------------------------------------------------
