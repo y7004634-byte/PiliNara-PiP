@@ -104,24 +104,35 @@ jobs:
           b = s.index("\n\n\ndef die", a)
           bridge = """BRIDGE = r'''
           // LC_REFRESH_BRIDGE_V2_BEGIN
-          /// v3 userfix2: run refreshes through the proven headless SideStore service.
-          /// Non-host apps run first; the LiveContainer host runs last.
+          /// v3 userfix3: use the proven headless service and keep refresh
+          /// verification state in the LiveContainer host process.
           public enum LiveContainerRefreshBridge {
+              private static func defaults() -> UserDefaults {
+                  UserDefaults(suiteName: "group.com.SideStore.SideStore") ?? .standard
+              }
+
               public static func refreshAllApps() async throws {
                   guard #available(iOS 17.0, *) else {
                       throw NSError(domain: "LiveContainerRefresh.UnsupportedOS", code: 17,
                           userInfo: [NSLocalizedDescriptionKey: "The embedded automatic refresh bridge requires iOS 17 or later."])
                   }
                   try Task.checkCancellation()
+                  let store = defaults()
+                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+                        UUID(uuidString: runID) != nil else {
+                      throw CombinedFailure(operation: "refresh", stage: .command,
+                          code: .invalidConfiguration, id: UUID().uuidString, retryable: false)
+                  }
+
                   let snapshot = try await V3ServiceBridge.shared.request(operation: "snapshot")
                   guard let rows = snapshot["installedApps"] as? [[String: Any]] else {
                       throw CombinedFailure(operation: "refresh", stage: .serviceReadiness,
-                          code: .invalidResponse, id: UUID().uuidString)
+                          code: .invalidResponse, id: runID)
                   }
                   let active = rows.filter { $0["isActive"] as? Bool == true }
                   guard !active.isEmpty else {
                       throw CombinedFailure(operation: "refresh", stage: .refreshVerification,
-                          code: .missingResult, id: UUID().uuidString, retryable: false)
+                          code: .missingResult, id: runID, retryable: false)
                   }
                   let ordered = active.sorted { lhs, rhs in
                       let leftHost = lhs["isHost"] as? Bool ?? false
@@ -130,19 +141,61 @@ jobs:
                       return (lhs["bundleID"] as? String ?? "") < (rhs["bundleID"] as? String ?? "")
                   }
                   let expected = ordered.compactMap { $0["bundleID"] as? String }
-                  UserDefaults(suiteName: "group.com.SideStore.SideStore")?
-                      .set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")
+                  store.set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")
+                  var results: [[String: Any]] = []
+                  persistManifest(runID: runID, expected: expected, results: results)
+
                   for row in ordered {
                       try Task.checkCancellation()
-                      try await refreshOne(row)
+                      if row["isHost"] as? Bool == true {
+                          prepareHostHandoff(row: row, runID: runID)
+                      }
+                      try await refreshOne(row, runID: runID)
+
+                      guard let bundleID = row["bundleID"] as? String else { continue }
+                      var item: [String: Any] = ["bundle_id": bundleID, "success": true]
+                      if let fresh = try? await V3ServiceBridge.shared.request(operation: "snapshot"),
+                         let apps = fresh["installedApps"] as? [[String: Any]],
+                         let updated = apps.first(where: { $0["bundleID"] as? String == bundleID }) {
+                          if let refreshed = updated["refreshedDate"] as? Date { item["refreshed_date"] = refreshed }
+                          if let expiration = updated["expirationDate"] as? Date { item["expiration_date"] = expiration }
+                      }
+                      results.removeAll { $0["bundle_id"] as? String == bundleID }
+                      results.append(item)
+                      persistManifest(runID: runID, expected: expected, results: results)
                   }
                   try Task.checkCancellation()
               }
 
-              private static func refreshOne(_ row: [String: Any]) async throws {
+              private static func persistManifest(runID: String, expected: [String], results: [[String: Any]]) {
+                  defaults().set([
+                      "version": 3,
+                      "schema": "LiveContainerRefreshManifestV3",
+                      "run_id": runID,
+                      "expected_ids": expected,
+                      "results": results,
+                      "date": Date(),
+                      "host_handoff": defaults().bool(forKey: "liveContainerAutoRefreshHostHandoff")
+                  ], forKey: "liveContainerAutoRefreshVerification")
+              }
+
+              private static func prepareHostHandoff(row: [String: Any], runID: String) {
+                  let store = defaults()
+                  store.set(true, forKey: "liveContainerAutoRefreshHostHandoff")
+                  store.set(runID, forKey: "liveContainerAutoRefreshHostHandoffRunID")
+                  store.set(Date(), forKey: "liveContainerAutoRefreshHostHandoffStartedAt")
+                  if let expiration = row["expirationDate"] as? Date {
+                      store.set(expiration, forKey: "liveContainerAutoRefreshHostPreviousExpiration")
+                  }
+                  if let bundleID = row["bundleID"] as? String {
+                      store.set(bundleID, forKey: "liveContainerAutoRefreshHostResultBundleID")
+                  }
+              }
+
+              private static func refreshOne(_ row: [String: Any], runID: String) async throws {
                   guard let target = row["identifier"] as? String, !target.isEmpty else {
                       throw CombinedFailure(operation: "refresh", stage: .command,
-                          code: .invalidConfiguration, id: UUID().uuidString)
+                          code: .invalidConfiguration, id: runID)
                   }
                   let started = try await V3ServiceBridge.shared.request(
                       operation: "opStart",
@@ -150,7 +203,7 @@ jobs:
                   )
                   guard let session = started["session"] as? String, !session.isEmpty else {
                       throw CombinedFailure(operation: "refresh", stage: .command,
-                          code: .invalidResponse, id: UUID().uuidString)
+                          code: .invalidResponse, id: runID)
                   }
                   var reply = started
                   let deadline = Date().addingTimeInterval(540)
@@ -162,24 +215,23 @@ jobs:
                           return
                       case "waitingForAuthentication":
                           throw CombinedFailure(operation: "refresh", stage: .authentication,
-                              code: .notReady, id: UUID().uuidString, retryable: false)
+                              code: .notReady, id: runID, retryable: false)
                       case "failed":
                           let stage = (reply["stage"] as? String).flatMap(CombinedFailure.Stage.init(rawValue:)) ?? .refreshVerification
                           let code = (reply["code"] as? String).flatMap(CombinedFailure.Code.init(rawValue:)) ?? .failed
-                          throw CombinedFailure(operation: "refresh", stage: stage,
-                              code: code, id: UUID().uuidString)
+                          throw CombinedFailure(operation: "refresh", stage: stage, code: code, id: runID)
                       case "cancelled":
                           throw CombinedFailure(operation: "refresh", stage: .command,
-                              code: .cancelled, id: UUID().uuidString, retryable: false)
+                              code: .cancelled, id: runID, retryable: false)
                       case "awaitingPrompt", "requiresSource":
                           throw CombinedFailure(operation: "refresh", stage: .command,
-                              code: .unsupported, id: UUID().uuidString, retryable: false)
+                              code: .unsupported, id: runID, retryable: false)
                       default:
                           break
                       }
                       guard Date() < deadline else {
                           throw CombinedFailure(operation: "refresh", stage: .command,
-                              code: .timedOut, id: UUID().uuidString, retryable: true)
+                              code: .timedOut, id: runID, retryable: true)
                       }
                       try await Task.sleep(nanoseconds: 250_000_000)
                       reply = try await V3ServiceBridge.shared.request(operation: "opPoll", target: session)
@@ -276,12 +328,44 @@ jobs:
               '                        self.persistRefreshResult(app: app, result: result)\n' + result_anchor, 1)
 
           p.write_text(s, encoding="utf-8")
-          print("userfix2 builder patch applied")
+
+          # 3) If refreshing the host replaces/kills the foreground process before
+          #    the command can return, relaunch verification converts the proven
+          #    installed-profile advance into the missing host result.
+          p = Path("builder/scripts/templates/livecontainer_refresh_scheduler.swift")
+          s = p.read_text(encoding="utf-8")
+          old = '''            defaults.set(true, forKey: hostVerifiedKey)
+                      defaults.removeObject(forKey: hostHandoffKey)
+                      print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED evidence=installed_profile_expiration_advanced")
+                      let batch = verifyRefreshManifest(runID: runID)
+          '''
+          new = '''            defaults.set(true, forKey: hostVerifiedKey)
+                      if var manifest = defaults.dictionary(forKey: verificationKey),
+                         manifest["run_id"] as? String == runID,
+                         let hostBundleID = defaults.string(forKey: "liveContainerAutoRefreshHostResultBundleID") {
+                          var results = manifest["results"] as? [[String: Any]] ?? []
+                          results.removeAll { $0["bundle_id"] as? String == hostBundleID }
+                          results.append(["bundle_id": hostBundleID, "success": true,
+                                          "expiration_date": current.expiration, "refreshed_date": Date()])
+                          manifest["results"] = results
+                          manifest["date"] = Date()
+                          defaults.set(manifest, forKey: verificationKey)
+                      }
+                      defaults.removeObject(forKey: hostHandoffKey)
+                      defaults.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")
+                      print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED evidence=installed_profile_expiration_advanced")
+                      let batch = verifyRefreshManifest(runID: runID)
+          '''
+          if old not in s:
+              raise SystemExit("userfix3 scheduler host-verification anchor not found")
+          p.write_text(s.replace(old, new, 1), encoding="utf-8")
+
+          print("userfix3 builder patch applied")
           PY
 
-          grep -Fq 'v3 userfix2: run refreshes through the proven headless SideStore service' builder/scripts/patch_livecontainer_autorefresh.py
+          grep -Fq 'v3 userfix3: use the proven headless service' builder/scripts/patch_livecontainer_autorefresh.py
           grep -Fq 'prepareHostHandoffIfNeeded' builder/scripts/templates/v3_headless_runtime.swift
-          grep -Fq 'LiveContainerRefreshManifestV2' builder/scripts/templates/v3_headless_runtime.swift
+          grep -Fq 'liveContainerAutoRefreshHostResultBundleID' builder/scripts/templates/livecontainer_refresh_scheduler.swift
 
       - name: Apply and verify host integration
         shell: bash
