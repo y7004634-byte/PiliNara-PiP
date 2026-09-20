@@ -435,7 +435,7 @@ replace(
                     showDanmakuPool();
 """,
     """                    Get.back();
-                    Future.delayed(const Duration(milliseconds: 380), () {
+                    Timer(const Duration(milliseconds: 380), () {
                       if (mounted) {
                         showDanmakuPool();
                       }
@@ -455,19 +455,16 @@ insert_before(
                     dense: true,
                     onTap: () {
                       Get.back();
-                      Future.delayed(
-                        const Duration(milliseconds: 380),
-                        () {
-                          if (!mounted) return;
-                          UniversalMediaExport.show(
-                            context,
-                            controller: videoDetailCtr,
-                            title:
-                                introController.videoDetail.value.title ??
-                                videoDetailCtr.bvid,
-                          );
-                        },
-                      );
+                      Timer(const Duration(milliseconds: 380), () {
+                        if (!mounted) return;
+                        UniversalMediaExport.show(
+                          context,
+                          controller: videoDetailCtr,
+                          title:
+                              introController.videoDetail.value.title ??
+                              videoDetailCtr.bvid,
+                        );
+                      });
                     },
                     leading: const Icon(
                       Icons.download_for_offline_outlined,
