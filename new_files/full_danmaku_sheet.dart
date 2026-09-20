@@ -253,8 +253,10 @@ class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
         ? '已载入 $_loaded/$_total 分片 · ${_items.length} 条'
         : '${_items.length} 条';
 
-    return Column(
-      children: [
+    return Material(
+      color: theme.colorScheme.surface,
+      child: Column(
+        children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
           child: Row(
@@ -356,7 +358,8 @@ class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
                   },
                 ),
         ),
-      ],
+        ],
+      ),
     );
   }
 }
