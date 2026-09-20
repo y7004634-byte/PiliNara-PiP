@@ -5,6 +5,7 @@ import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/http/video.dart';
 import 'package:PiliPlus/models/video/play/url.dart';
 import 'package:PiliPlus/pages/video/controller.dart';
+import 'package:PiliPlus/pages/download/universal_export_view.dart';
 import 'package:PiliPlus/pages/video/widgets/full_danmaku_sheet.dart';
 import 'package:PiliPlus/utils/pilinara_native_bridge.dart';
 import 'package:PiliPlus/utils/share_utils.dart';
@@ -279,13 +280,17 @@ abstract final class UniversalMediaExport {
     );
     await work.create(recursive: true);
 
-    final baseName = _safeFileName(title);
+    final qualitySuffix = options.audioOnly
+        ? 'Audio'
+        : '${video?.height ?? options.quality}P';
+    final baseName = _safeFileName('${title}_$qualitySuffix');
     final audioPath = path.join(work.path, 'audio.m4a');
     final videoPath = path.join(work.path, 'video.mp4');
-    final outputPath = path.join(
-      work.path,
-      '$baseName.${options.audioOnly ? 'm4a' : 'mp4'}',
+    final outputPath = await UniversalExportStore.uniqueMediaPath(
+      baseName: baseName,
+      extension: options.audioOnly ? 'm4a' : 'mp4',
     );
+    final outputStem = path.withoutExtension(outputPath);
 
     final sharedPaths = <String>[];
 
@@ -330,7 +335,7 @@ abstract final class UniversalMediaExport {
             format: SubtitleFormat.srt,
           );
           if (srt != null) {
-            final srtPath = path.join(work.path, '$baseName.srt');
+            final srtPath = '$outputStem.srt';
             await File(srtPath).writeAsString(srt, encoding: utf8);
             sharedPaths.add(srtPath);
           }
@@ -344,7 +349,7 @@ abstract final class UniversalMediaExport {
           cid: controller.cid.value,
           durationMs: durationMs,
         );
-        final xmlPath = path.join(work.path, '$baseName.xml');
+        final xmlPath = '$outputStem.xml';
         await File(xmlPath).writeAsString(
           DanmakuArchiveService.toBilibiliXml(items),
           encoding: utf8,
@@ -353,6 +358,10 @@ abstract final class UniversalMediaExport {
       }
 
       SmartDialog.dismiss();
+      SmartDialog.showToast(
+        '下载完成，已保存到「离线缓存 > 通用档案」',
+        displayTime: const Duration(seconds: 3),
+      );
 
       await SharePlus.instance.share(
         ShareParams(
