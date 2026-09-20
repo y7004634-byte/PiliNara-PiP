@@ -133,18 +133,13 @@ Future<void> showFullDanmakuListSheet(
   required int durationMs,
   required PlPlayerController playerController,
 }) async {
-  await showModalBottomSheet<void>(
-    context: context,
-    useSafeArea: true,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (sheetContext) => SizedBox(
-      height: MediaQuery.sizeOf(sheetContext).height * 0.78,
-      child: _FullDanmakuListSheet(
-        cid: cid,
-        durationMs: durationMs,
-        playerController: playerController,
-      ),
+  await PageUtils.showVideoBottomSheet(
+    context,
+    maxWidth: 640,
+    child: _FullDanmakuListSheet(
+      cid: cid,
+      durationMs: durationMs,
+      playerController: playerController,
     ),
   );
 }

@@ -41,6 +41,25 @@ abstract final class UniversalMediaExport {
     required VideoDetailController controller,
     required String title,
   }) async {
+    try {
+      await _showImpl(
+        context,
+        controller: controller,
+        title: title,
+      );
+    } catch (e) {
+      SmartDialog.showToast(
+        '下載介面開啟失敗：$e',
+        displayTime: const Duration(seconds: 5),
+      );
+    }
+  }
+
+  static Future<void> _showImpl(
+    BuildContext context, {
+    required VideoDetailController controller,
+    required String title,
+  }) async {
     final dash = controller.data.dash;
     if (dash == null || dash.video?.isEmpty != false) {
       SmartDialog.showToast('当前影片没有可快速封装的 DASH 资源');
@@ -64,11 +83,7 @@ abstract final class UniversalMediaExport {
       return h == null ? '画质 $quality' : '${h}P';
     }
 
-    var selectedQuality =
-        controller.currentVideoQa.value?.code ?? qualities.first;
-    if (!qualities.contains(selectedQuality)) {
-      selectedQuality = qualities.first;
-    }
+    var selectedQuality = qualities.first;
 
     List<String> codecsFor(int quality) => videos
         .where((e) => e.id == quality)
@@ -82,14 +97,10 @@ abstract final class UniversalMediaExport {
     var exportDanmaku = false;
 
     _UniversalExportOptions? options;
-    await showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (modalContext) => SizedBox(
-        height: MediaQuery.sizeOf(modalContext).height * 0.72,
-        child: StatefulBuilder(
+    await PageUtils.showVideoBottomSheet(
+      context,
+      maxWidth: 560,
+      child: StatefulBuilder(
         builder: (sheetContext, setState) {
           final codecs = codecsFor(selectedQuality);
           if (!codecs.contains(selectedCodec)) {
@@ -232,7 +243,6 @@ abstract final class UniversalMediaExport {
             ),
           );
         },
-      ),
       ),
     );
 

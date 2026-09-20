@@ -435,11 +435,7 @@ replace(
                     showDanmakuPool();
 """,
     """                    Get.back();
-                    Timer(const Duration(milliseconds: 650), () {
-                      if (mounted) {
-                        showDanmakuPool();
-                      }
-                    });
+                    showDanmakuPool();
 """,
     "defer full danmaku sheet until menu closes",
 )
@@ -455,16 +451,13 @@ insert_before(
                     dense: true,
                     onTap: () {
                       Get.back();
-                      Timer(const Duration(milliseconds: 650), () {
-                        if (!mounted) return;
-                        UniversalMediaExport.show(
-                          context,
-                          controller: videoDetailCtr,
-                          title:
-                              introController.videoDetail.value.title ??
-                              videoDetailCtr.bvid,
-                        );
-                      });
+                      UniversalMediaExport.show(
+                        this.context,
+                        controller: videoDetailCtr,
+                        title:
+                            introController.videoDetail.value.title ??
+                            videoDetailCtr.bvid,
+                      );
                     },
                     leading: const Icon(
                       Icons.download_for_offline_outlined,
@@ -472,7 +465,7 @@ insert_before(
                     ),
                     title: const Text('下载 MP4 / M4A', style: titleStyle),
                   ),
-""",
+"""
     "universal MP4/M4A export menu item",
 )
 
