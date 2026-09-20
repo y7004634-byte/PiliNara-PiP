@@ -1,4 +1,4 @@
-name: Build YouMod zh-Hant + latest VolumeBoostYT
+name: Build YouMod zh-Hant + custom PiP
 
 on:
   workflow_dispatch:
@@ -15,15 +15,19 @@ concurrency:
 jobs:
   patch:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout patcher
         uses: actions/checkout@v4
         with:
           ref: youmod-localization-build
 
-      - name: Install OpenCC
-        run: brew install opencc
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install opencc make ldid
+          pipx install https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
 
       - name: Download exact YouMod 21.37.4 release
         shell: bash
@@ -34,47 +38,102 @@ jobs:
             https://github.com/jaydenjcpy/YouMod/releases/download/youmod-ipa35/YouMod_21.37.4_v2.0.0.ipa
           echo "ee9e487ebec3589fb7ca37a0ac37377348b4a4dc6783efa4fd783dc96c0d53c7  base.ipa" | shasum -a 256 -c -
 
-      - name: Download latest VolumeBoostYT v1.3.3
+      - name: Setup Theos and headers
         shell: bash
         run: |
           set -euo pipefail
-          curl -L --fail --retry 3 \
-            -o VolumeBoostYT.dylib \
-            https://github.com/candyzp/VolumeBoostYT/releases/download/v1.3.3/VolumeBoostYT.dylib
-          echo "eb413c5066a7339fe12047a43c304889e020501230344323a6e7cbef798950dc  VolumeBoostYT.dylib" | shasum -a 256 -c -
-          file VolumeBoostYT.dylib
-          strings VolumeBoostYT.dylib | grep -Fq 'VolumeBoostYTGestureMethod'
-          strings VolumeBoostYT.dylib | grep -Fq 'VolumeBoostYTShakeSensitivity'
-          strings VolumeBoostYT.dylib | grep -Fq 'VolumeBoostYTHapticFeedbackEnabled'
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "THEOS=${{ github.workspace }}/theos" >> "$GITHUB_ENV"
 
-      - name: Patch IPA
+          git clone --quiet --depth=1 --recurse-submodules https://github.com/roothide/theos.git theos
+          git clone --quiet --depth=1 -n --filter=tree:0 https://github.com/Tonwalter888/iOS-SDKs.git
+          cd iOS-SDKs
+          git sparse-checkout set --no-cone iPhoneOS26.5.sdk
+          git checkout --quiet
+          mv *.sdk "${{ github.workspace }}/theos/sdks"
+          cd "${{ github.workspace }}"
+
+          git clone --quiet --depth=1 https://github.com/PoomSmart/YouTubeHeader.git "${{ github.workspace }}/theos/include/YouTubeHeader"
+          git clone --quiet --depth=1 https://github.com/PoomSmart/PSHeader.git "${{ github.workspace }}/theos/include/PSHeader"
+
+      - name: Clone current tweak sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 --branch v1.3.3 https://github.com/candyzp/VolumeBoostYT.git
+          git clone --quiet --depth=1 https://github.com/PoomSmart/YouPiP.git
+          git clone --quiet --depth=1 https://github.com/PoomSmart/YTVideoOverlay.git
+          git clone --quiet --depth=1 https://github.com/PoomSmart/YTABConfig.git
+
+      - name: Apply user source patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/patch_youmod_sources.py VolumeBoostYT YouPiP YTABConfig
+
+          grep -Fq '右側滑動' VolumeBoostYT/Tweak.x
+          grep -Fq '音量增益' VolumeBoostYT/YTVolumeHUD.m
+          grep -Fq 'YOUMOD_USER_PIP_SKIP_60' YouPiP/Tweak.x
+          grep -Fq 'customSeconds = requestedSeconds < 0.0 ? -60.0 : 60.0' YouPiP/Tweak.x
+          grep -Fq 'YTABC.YTColdConfig.enableRepeatChapterSnackbarController' YTABConfig/Settings.x
+          grep -Fq 'YTABC.YTColdConfig.iosEnableSwitchChapterOnChapterRepeating' YTABConfig/Settings.x
+
+      - name: Build customized tweaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          export THEOS="${{ github.workspace }}/theos"
+
+          cd "${{ github.workspace }}/VolumeBoostYT"
+          make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless ARCHS=arm64
+          cd "${{ github.workspace }}/YouPiP"
+          make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          cd "${{ github.workspace }}/YTABConfig"
+          make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          cd "${{ github.workspace }}"
+
+          VOL_DEB="$(find VolumeBoostYT/packages -type f -name '*.deb' | head -n 1)"
+          PIP_DEB="$(find YouPiP/packages -type f -name '*.deb' | head -n 1)"
+          ABC_DEB="$(find YTABConfig/packages -type f -name '*.deb' | head -n 1)"
+          test -f "$VOL_DEB"
+          test -f "$PIP_DEB"
+          test -f "$ABC_DEB"
+          printf 'VolumeBoost=%s\nYouPiP=%s\nYTABConfig=%s\n' "$VOL_DEB" "$PIP_DEB" "$ABC_DEB" | tee custom-debs.txt
+
+      - name: Inject customized tweaks into base IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          VOL_DEB="$(find VolumeBoostYT/packages -type f -name '*.deb' | head -n 1)"
+          PIP_DEB="$(find YouPiP/packages -type f -name '*.deb' | head -n 1)"
+          ABC_DEB="$(find YTABConfig/packages -type f -name '*.deb' | head -n 1)"
+
+          cyan -i base.ipa -o source-patched.ipa -uwef "$VOL_DEB" "$PIP_DEB" "$ABC_DEB"
+          test -s source-patched.ipa
+
+      - name: Apply Traditional Chinese resource patch
         shell: bash
         run: |
           set -euo pipefail
           rm -rf work
           mkdir work
-          ditto -x -k base.ipa work
+          ditto -x -k source-patched.ipa work
           APP="$(find work/Payload -maxdepth 1 -type d -name '*.app' | head -n 1)"
           test -n "$APP"
-          test -f "$APP/Frameworks/VolumeBoostYT.dylib"
-
-          cp "$APP/Frameworks/VolumeBoostYT.dylib" old-VolumeBoostYT.dylib
-          echo "old_volume_sha=$(shasum -a 256 "$APP/Frameworks/VolumeBoostYT.dylib" | awk '{print $1}')" | tee build-info.txt
-          cp VolumeBoostYT.dylib "$APP/Frameworks/VolumeBoostYT.dylib"
-          chmod 755 "$APP/Frameworks/VolumeBoostYT.dylib"
-          echo "new_volume_sha=$(shasum -a 256 "$APP/Frameworks/VolumeBoostYT.dylib" | awk '{print $1}')" | tee -a build-info.txt
-          echo "volume_version=1.3.3" | tee -a build-info.txt
 
           python3 tools/patch_youmod_zhhant.py "$APP"
 
           python3 - "$APP" <<'PY'
           from pathlib import Path
-          import plistlib, sys
+          import plistlib, subprocess, sys
           app = Path(sys.argv[1])
 
-          def count(path):
+          def load(path):
               with path.open("rb") as f:
-                  return len(plistlib.load(f))
+                  return plistlib.load(f)
+
+          def count(path):
+              return len(load(path))
 
           checks = [
               ("YouMod.bundle", 559),
@@ -91,6 +150,13 @@ jobs:
               assert zh_count >= expected, (bundle, zh_count, expected)
               print(f"{bundle}: en={en_count} zh-Hant={zh_count}")
 
+          ytu = load(app / "YTUHD.bundle" / "zh-Hant.lproj" / "Localizable.strings")
+          assert ytu["SKIP_LOOP_FILTER"] == "跳過迴圈濾波"
+          assert ytu["LOOP_FILTER_OPTIMIZATION"] == "迴圈濾波最佳化"
+          assert ytu["ROW_THREADING"] == "列多執行緒處理"
+          assert ytu["HW_VP9_SUPPORT"] == "硬體 VP9 解碼支援"
+          assert ytu["HW_AV1_SUPPORT"] == "硬體 AV1 解碼支援"
+
           aliases = [
               "DontEatMyContent.bundle", "RYD.bundle", "YTUHD.bundle",
               "YTVideoOverlay.bundle", "YTWKS.bundle", "YTABC.bundle",
@@ -99,26 +165,57 @@ jobs:
           for bundle in aliases:
               p = app / bundle / "zh-Hant.lproj" / "Localizable.strings"
               assert p.exists(), (bundle, "zh-Hant alias missing")
+
+          fw = app / "Frameworks"
+          vol = fw / "VolumeBoostYT.dylib"
+          pip = fw / "YouPiP.dylib"
+          abc = fw / "YTABConfig.dylib"
+          assert vol.exists() and pip.exists() and abc.exists()
+
+          vol_strings = subprocess.check_output(["strings", str(vol)], text=True, errors="ignore")
+          assert "觸發方式" in vol_strings
+          assert "音量增益" in vol_strings
+          assert "Remember Volume" not in vol_strings
+
+          abc_strings = subprocess.check_output(["strings", str(abc)], text=True, errors="ignore")
+          assert "YTABC.YTColdConfig.enableRepeatChapterSnackbarController" in abc_strings
+          assert "YTABC.YTColdConfig.iosEnableSwitchChapterOnChapterRepeating" in abc_strings
+
+          print("custom tweak and localization checks passed")
           PY
 
-          strings "$APP/Frameworks/VolumeBoostYT.dylib" | grep -Fq 'VolumeBoostYTGestureMethod'
-          strings "$APP/Frameworks/VolumeBoostYT.dylib" | grep -Fq 'VolumeBoostYTShakeSensitivity'
-
+      - name: Repack final IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3_PiP60.ipa"
           (
             cd work
-            zip -qry -y ../YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3.ipa Payload
+            zip -qry -y "../$OUT" Payload
           )
 
-          shasum -a 256 YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3.ipa | tee final-sha256.txt
-          ls -lh YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3.ipa
+          {
+            echo "base_youmod=21.37.4_v2.0.0"
+            echo "volume_boost=1.3.3"
+            echo "volume_boost_ui=zh-Hant source rebuild"
+            echo "pip_skip_backward_seconds=60"
+            echo "pip_skip_forward_seconds=60"
+            echo "chapter_repeat_snackbar_default=1"
+            echo "switch_chapter_while_repeating_default=0"
+            echo "ytuhd_zh_hant=completed"
+          } | tee build-info.txt
+
+          shasum -a 256 "$OUT" | tee final-sha256.txt
+          ls -lh "$OUT"
 
       - name: Upload patched IPA
         uses: actions/upload-artifact@v4
         with:
-          name: YouMod-21.37.4-zhHant-VolumeBoostYT-1.3.3
+          name: YouMod-21.37.4-zhHant-VolBoost1.3.3-PiP60
           path: |
-            YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3.ipa
+            YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3_PiP60.ipa
             build-info.txt
+            custom-debs.txt
             final-sha256.txt
           if-no-files-found: error
           compression-level: 0
