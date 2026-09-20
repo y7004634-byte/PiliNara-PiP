@@ -107,6 +107,16 @@ def localize_youmod(app: Path):
     for loc in ("zh-Hant.lproj", "zh-TW.lproj"):
         write_bplist(bundle / loc / "Localizable.strings", converted)
 
+    info = bundle / "Info.plist"
+    if info.exists():
+        p = load_plist(info)
+        locs = list(p.get("CFBundleLocalizations") or [])
+        for x in ("en", "zh-Hans", "zh-Hant", "zh-TW"):
+            if x not in locs:
+                locs.append(x)
+        p["CFBundleLocalizations"] = locs
+        write_bplist(info, p)
+
 def localize_gonerino(app: Path):
     bundle = app / "Gonerino.bundle"
     enp = bundle / "en.lproj" / "Localizable.strings"
@@ -214,6 +224,15 @@ def localize_yougroupsettings(app: Path):
         out["TWEAKS"] = "外掛調整"
     for loc in ("zh-Hant.lproj", "zh-TW.lproj"):
         write_bplist(bundle / loc / "Localizable.strings", out)
+    info = bundle / "Info.plist"
+    if info.exists():
+        p = load_plist(info)
+        locs = list(p.get("CFBundleLocalizations") or [])
+        for x in ("en", "zh-Hant", "zh-TW"):
+            if x not in locs:
+                locs.append(x)
+        p["CFBundleLocalizations"] = locs
+        write_bplist(info, p)
 
 def add_standard_traditional_aliases(app: Path):
     # These bundled tweaks already ship complete Traditional Chinese resources,
