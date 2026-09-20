@@ -175,4 +175,168 @@ replace(
     'PiliNara local settings backup/restore entry',
 )
 
+
+# iOS render-size optimization: keep the selected source/decoder quality,
+# but cap the media-kit Flutter texture to the physical viewport size.
+replace(
+    view,
+    '''    videoController = plPlayerController.videoController!;
+
+    if (PlatformUtils.isMobile) {
+''',
+    '''    videoController = plPlayerController.videoController!;
+    if (Platform.isIOS) {
+      _iosSourceSizeSubscription =
+          plPlayerController.videoPlayerController?.stream.size.listen((_) {
+            _scheduleIosRenderSizeOptimization();
+          });
+    }
+
+    if (PlatformUtils.isMobile) {
+''',
+    'PiliNara iOS render-size source-size listener',
+)
+
+replace(
+    view,
+    '''    _brightnessListener?.cancel();
+    _controlsListener?.cancel();
+    _animationController.dispose();
+''',
+    '''    _brightnessListener?.cancel();
+    _controlsListener?.cancel();
+    _iosSourceSizeSubscription?.cancel();
+    _animationController.dispose();
+''',
+    'PiliNara iOS render-size listener dispose',
+)
+
+replace(
+    view,
+    '''  late ColorScheme colorScheme;
+  late double maxWidth;
+  late double maxHeight;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    colorScheme = ColorScheme.of(context);
+  }
+
+  @override
+  void didUpdateWidget(covariant PLVideoPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (Platform.isAndroid && AndroidHelper.isPipMode) {
+      plPlayerController.controls = false;
+    }
+  }
+''',
+    '''  late ColorScheme colorScheme;
+  late double maxWidth;
+  late double maxHeight;
+
+  // iOS media-kit renders into a Flutter texture. Leaving the output size
+  // unconstrained makes a 4K source render a full 3840x2160 texture even
+  // though the phone display cannot show that many pixels. Keep the source
+  // stream/decoder at its original quality, but cap only the render texture
+  // to the physical viewport size.
+  bool _iosRenderResizeScheduled = false;
+  int? _iosRenderWidth;
+  int? _iosRenderHeight;
+  StreamSubscription<(int, int)>? _iosSourceSizeSubscription;
+
+  void _scheduleIosRenderSizeOptimization() {
+    if (!Platform.isIOS || _iosRenderResizeScheduled) return;
+    _iosRenderResizeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _iosRenderResizeScheduled = false;
+      if (!mounted) return;
+      unawaited(_applyIosRenderSizeOptimization());
+    });
+  }
+
+  Future<void> _applyIosRenderSizeOptimization() async {
+    final sourceWidth =
+        plPlayerController.width ??
+        plPlayerController.videoPlayerController?.state.width ??
+        0;
+    final sourceHeight =
+        plPlayerController.height ??
+        plPlayerController.videoPlayerController?.state.height ??
+        0;
+    if (sourceWidth <= 0 || sourceHeight <= 0) return;
+
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final viewportWidth = widget.maxWidth * dpr;
+    final viewportHeight = widget.maxHeight * dpr;
+    if (!viewportWidth.isFinite ||
+        !viewportHeight.isFinite ||
+        viewportWidth <= 0 ||
+        viewportHeight <= 0) {
+      return;
+    }
+
+    final scale = math.min(
+      1.0,
+      math.min(
+        viewportWidth / sourceWidth,
+        viewportHeight / sourceHeight,
+      ),
+    );
+
+    var targetWidth =
+        math.max(2, (sourceWidth * scale).floor()).toInt();
+    var targetHeight =
+        math.max(2, (sourceHeight * scale).floor()).toInt();
+
+    // Keep dimensions even to avoid edge cases in YUV-backed render paths.
+    targetWidth -= targetWidth % 2;
+    targetHeight -= targetHeight % 2;
+
+    if (_iosRenderWidth == targetWidth &&
+        _iosRenderHeight == targetHeight) {
+      return;
+    }
+
+    _iosRenderWidth = targetWidth;
+    _iosRenderHeight = targetHeight;
+    try {
+      await videoController.setSize(
+        width: targetWidth,
+        height: targetHeight,
+      );
+    } catch (e, s) {
+      _iosRenderWidth = null;
+      _iosRenderHeight = null;
+      if (kDebugMode) {
+        debugPrint(
+          '[PLVideoPlayer] iOS render-size optimization failed: $e\\n$s',
+        );
+      }
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    colorScheme = ColorScheme.of(context);
+    _scheduleIosRenderSizeOptimization();
+  }
+
+  @override
+  void didUpdateWidget(covariant PLVideoPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (Platform.isAndroid && AndroidHelper.isPipMode) {
+      plPlayerController.controls = false;
+    }
+    if (Platform.isIOS &&
+        (oldWidget.maxWidth != widget.maxWidth ||
+            oldWidget.maxHeight != widget.maxHeight)) {
+      _scheduleIosRenderSizeOptimization();
+    }
+  }
+''',
+    'PiliNara iOS physical-viewport render-size optimization',
+)
+
 print('ALL SOURCE PATCHES APPLIED')
