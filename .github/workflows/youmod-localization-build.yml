@@ -1,0 +1,125 @@
+name: Build YouMod zh-Hant + latest VolumeBoostYT
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [youmod-localization-build]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: youmod-localization-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout patcher
+        uses: actions/checkout@v4
+        with:
+          ref: youmod-localization-build
+
+      - name: Install OpenCC
+        run: brew install opencc
+
+      - name: Download exact YouMod 21.37.4 release
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            -o base.ipa \
+            https://github.com/jaydenjcpy/YouMod/releases/download/youmod-ipa35/YouMod_21.37.4_v2.0.0.ipa
+          echo "ee9e487ebec3589fb7ca37a0ac37377348b4a4dc6783efa4fd783dc96c0d53c7  base.ipa" | shasum -a 256 -c -
+
+      - name: Download latest VolumeBoostYT v1.3.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            -o VolumeBoostYT.dylib \
+            https://github.com/candyzp/VolumeBoostYT/releases/download/v1.3.3/VolumeBoostYT.dylib
+          echo "eb413c5066a7339fe12047a43c304889e020501230344323a6e7cbef798950dc  VolumeBoostYT.dylib" | shasum -a 256 -c -
+          file VolumeBoostYT.dylib
+          strings VolumeBoostYT.dylib | grep -Fq 'VolumeBoostYTGestureMethod'
+          strings VolumeBoostYT.dylib | grep -Fq 'VolumeBoostYTShakeSensitivity'
+          strings VolumeBoostYT.dylib | grep -Fq 'VolumeBoostYTHapticFeedbackEnabled'
+
+      - name: Patch IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf work
+          mkdir work
+          ditto -x -k base.ipa work
+          APP="$(find work/Payload -maxdepth 1 -type d -name '*.app' | head -n 1)"
+          test -n "$APP"
+          test -f "$APP/Frameworks/VolumeBoostYT.dylib"
+
+          cp "$APP/Frameworks/VolumeBoostYT.dylib" old-VolumeBoostYT.dylib
+          echo "old_volume_sha=$(shasum -a 256 "$APP/Frameworks/VolumeBoostYT.dylib" | awk '{print $1}')" | tee build-info.txt
+          cp VolumeBoostYT.dylib "$APP/Frameworks/VolumeBoostYT.dylib"
+          chmod 755 "$APP/Frameworks/VolumeBoostYT.dylib"
+          echo "new_volume_sha=$(shasum -a 256 "$APP/Frameworks/VolumeBoostYT.dylib" | awk '{print $1}')" | tee -a build-info.txt
+          echo "volume_version=1.3.3" | tee -a build-info.txt
+
+          python3 tools/patch_youmod_zhhant.py "$APP"
+
+          python3 - "$APP" <<'PY'
+          from pathlib import Path
+          import plistlib, sys
+          app = Path(sys.argv[1])
+
+          def count(path):
+              with path.open("rb") as f:
+                  return len(plistlib.load(f))
+
+          checks = [
+              ("YouMod.bundle", 559),
+              ("Gonerino.bundle", 74),
+              ("YouGroupSettings.bundle", 1),
+          ]
+          for bundle, expected in checks:
+              en = app / bundle / "en.lproj" / "Localizable.strings"
+              zh = app / bundle / "zh-Hant.lproj" / "Localizable.strings"
+              assert en.exists() and zh.exists(), (bundle, "missing localization")
+              en_count = count(en)
+              zh_count = count(zh)
+              assert en_count == zh_count, (bundle, en_count, zh_count)
+              assert zh_count >= expected, (bundle, zh_count, expected)
+              print(f"{bundle}: en={en_count} zh-Hant={zh_count}")
+
+          aliases = [
+              "DontEatMyContent.bundle", "RYD.bundle", "YTUHD.bundle",
+              "YTVideoOverlay.bundle", "YTWKS.bundle", "YTABC.bundle",
+              "YouPiP.bundle", "YouSlider.bundle",
+          ]
+          for bundle in aliases:
+              p = app / bundle / "zh-Hant.lproj" / "Localizable.strings"
+              assert p.exists(), (bundle, "zh-Hant alias missing")
+          PY
+
+          strings "$APP/Frameworks/VolumeBoostYT.dylib" | grep -Fq 'VolumeBoostYTGestureMethod'
+          strings "$APP/Frameworks/VolumeBoostYT.dylib" | grep -Fq 'VolumeBoostYTShakeSensitivity'
+
+          (
+            cd work
+            zip -qry -y ../YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3.ipa Payload
+          )
+
+          shasum -a 256 YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3.ipa | tee final-sha256.txt
+          ls -lh YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3.ipa
+
+      - name: Upload patched IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouMod-21.37.4-zhHant-VolumeBoostYT-1.3.3
+          path: |
+            YouMod_21.37.4_v2.0.0_zhHant_VolumeBoostYT-1.3.3.ipa
+            build-info.txt
+            final-sha256.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
