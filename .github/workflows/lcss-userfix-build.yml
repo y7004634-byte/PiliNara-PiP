@@ -494,13 +494,14 @@ jobs:
           grep -Fq '"host_handoff": false' builder/scripts/patch_livecontainer_autorefresh.py
           grep -Fq 'defaults.set(false, forKey: hostHandoffKey)' builder/scripts/templates/livecontainer_refresh_scheduler.swift
 
-      - name: Apply userfix7 UI, localization, and shared IPA fix
+      - name: Apply userfix8 UI, localization, and shared IPA handoff fix
         shell: bash
         run: |
           set -euo pipefail
           python3 userfix-repo/tools/lcss_userfix7.py
           grep -Fq 'liveContainerAutoRefreshProgress' builder/scripts/patch_livecontainer_autorefresh.py
-          grep -Fq 'security-scoped' builder/scripts/templates/v3_headless_runtime.swift
+          grep -Fq 'Staged IPA URL is invalid.' builder/scripts/templates/v3_headless_runtime.swift
+          grep -Fq 'V3SharedIPAInbox' builder/scripts/templates/v3_unified_shell.swift
           grep -Fq '安裝／側載 IPA' builder/scripts/templates/v3_unified_shell.swift
           grep -Fq '排程刷新' builder/scripts/templates/livecontainer_refresh_settings.swift
 
