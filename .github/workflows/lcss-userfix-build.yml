@@ -198,7 +198,7 @@ jobs:
           guard = '            guard app.isActive, app.bundleIdentifier != StoreApp.altstoreAppID else { throw V3SideStoreServiceError.unsupported }\n'
           if guard not in s:
               raise SystemExit("userfix2 host guard anchor not found")
-          s = s.replace(guard, '            guard app.isActive else { throw V3SideStoreServiceError.unsupported }\\n', 1)
+          s = s.replace(guard, '            guard app.isActive else { throw V3SideStoreServiceError.unsupported }\n', 1)
 
           anchor = '''    private struct V3OpDriver: @unchecked Sendable {
           '''
@@ -273,7 +273,7 @@ jobs:
           if result_anchor not in s:
               raise SystemExit("userfix2 result anchor not found")
           s = s.replace(result_anchor,
-              '                        self.persistRefreshResult(app: app, result: result)\\n' + result_anchor, 1)
+              '                        self.persistRefreshResult(app: app, result: result)\n' + result_anchor, 1)
 
           p.write_text(s, encoding="utf-8")
           print("userfix2 builder patch applied")
