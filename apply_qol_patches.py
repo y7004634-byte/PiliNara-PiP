@@ -46,10 +46,9 @@ replace(
 """,
     """  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    let registrar = engineBridge.pluginRegistry.registrar(
-      forPlugin: "PiliNaraNativeBridge"
+    PiliNaraNativeBridge.register(
+      messenger: engineBridge.applicationRegistrar.messenger()
     )
-    PiliNaraNativeBridge.register(with: registrar)
   }
 """,
     "register PiliNara iOS native bridge",
