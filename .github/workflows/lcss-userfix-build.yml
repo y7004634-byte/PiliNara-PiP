@@ -364,16 +364,14 @@ jobs:
           #    during rapid retests. Verify replacement by any authoritative
           #    installed-host identity change: expiration, profile UUID, or
           #    application bundle container path.
-          baseline_old = '''            defaults.set(["run_id": id.uuidString, "identifier": profile.identifier,
-                          "uuid": profile.uuid, "expiration": profile.expiration], forKey: hostBaselineKey)
-          '''
-          baseline_new = '''            defaults.set(["run_id": id.uuidString, "identifier": profile.identifier,
-                          "uuid": profile.uuid, "expiration": profile.expiration,
-                          "bundle_path": bundle.bundleURL.path], forKey: hostBaselineKey)
-          '''
-          if baseline_old not in s:
+          baseline_anchor = '"uuid": profile.uuid, "expiration": profile.expiration], forKey: hostBaselineKey)'
+          if baseline_anchor not in s:
               raise SystemExit("userfix4 host baseline anchor not found")
-          s = s.replace(baseline_old, baseline_new, 1)
+          s = s.replace(
+              baseline_anchor,
+              '"uuid": profile.uuid, "expiration": profile.expiration, "bundle_path": bundle.bundleURL.path], forKey: hostBaselineKey)',
+              1
+          )
 
           verify_old = '''            guard current.expiration > previous, current.expiration > Date() else {
                           defaults.set("HOST_REFRESH_AWAITING_RELAUNCH", forKey: healthStateKey)
