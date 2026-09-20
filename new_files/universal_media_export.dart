@@ -231,8 +231,13 @@ abstract final class UniversalMediaExport {
       ),
     );
 
-    if (options == null) return;
-    await _run(controller: controller, title: title, options: options);
+    final selectedOptions = options;
+    if (selectedOptions == null) return;
+    await _run(
+      controller: controller,
+      title: title,
+      options: selectedOptions,
+    );
   }
 
   static String _safeFileName(String value) {
