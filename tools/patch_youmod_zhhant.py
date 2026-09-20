@@ -21,6 +21,17 @@ def opencc_tw(text: str) -> str:
     )
     return p.stdout
 
+def opencc_tw_values(values):
+    # One OpenCC process for the entire table; much faster than spawning
+    # hundreds of processes for individual strings.
+    sep = "\u241eYOUMOD_LOCALIZATION_SEPARATOR\u241e"
+    joined = sep.join(values)
+    converted = opencc_tw(joined)
+    parts = converted.split(sep)
+    if len(parts) != len(values):
+        raise RuntimeError(f"OpenCC batch conversion split mismatch: {len(parts)} != {len(values)}")
+    return parts
+
 def localize_youmod(app: Path):
     bundle = app / "YouMod.bundle"
     src = bundle / "zh-CN.lproj" / "Localizable.strings"
@@ -29,8 +40,16 @@ def localize_youmod(app: Path):
     en = load_plist(enp)
 
     converted = {}
+    keys = []
+    values = []
     for key, value in zh.items():
-        converted[key] = opencc_tw(value) if isinstance(value, str) else value
+        if isinstance(value, str):
+            keys.append(key)
+            values.append(value)
+        else:
+            converted[key] = value
+    for key, value in zip(keys, opencc_tw_values(values)):
+        converted[key] = value
 
     # Taiwan-facing terminology / high-visibility labels.
     overrides = {
