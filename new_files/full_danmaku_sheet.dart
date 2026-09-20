@@ -25,20 +25,30 @@ abstract final class DanmakuArchiveService {
     var loaded = 0;
 
     Future<List<DanmakuElem>> fetchSegment(int zeroBasedIndex) async {
-      for (var attempt = 0; attempt < 2; attempt++) {
+      Object? lastError;
+      for (var attempt = 0; attempt < 3; attempt++) {
         if (shouldCancel?.call() == true) return const <DanmakuElem>[];
-        final res = await DmGrpc.dmSegMobile(
-          cid: cid,
-          segmentIndex: zeroBasedIndex + 1,
-        );
-        if (res case Success(:final response)) {
-          return response.elems;
+        try {
+          final res = await DmGrpc.dmSegMobile(
+            cid: cid,
+            segmentIndex: zeroBasedIndex + 1,
+          );
+          if (res case Success(:final response)) {
+            return response.elems;
+          }
+          lastError = res;
+        } catch (e) {
+          lastError = e;
         }
-        if (attempt == 0) {
-          await Future<void>.delayed(const Duration(milliseconds: 250));
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 250 * (attempt + 1)),
+          );
         }
       }
-      return const <DanmakuElem>[];
+      throw StateError(
+        '第 ${zeroBasedIndex + 1} 个弹幕分片载入失败：$lastError',
+      );
     }
 
     for (var start = 0; start < total; start += concurrentRequests) {
