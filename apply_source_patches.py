@@ -339,4 +339,77 @@ replace(
     'PiliNara iOS physical-viewport render-size optimization',
 )
 
+
+# Playback info: expose the actual media-kit render texture size so the
+# iOS physical-viewport optimization can be verified on-device.
+header_control = pili/'lib/pages/video/widgets/header_control.dart'
+replace(
+    header_control,
+    '''                    onTap: () => showPlayerInfo(context, player: player),
+''',
+    '''                    onTap: () => showPlayerInfo(
+                      context,
+                      player: player,
+                      renderWidth: plPlayerController
+                          .videoController
+                          ?.rect
+                          .value
+                          ?.width
+                          .round(),
+                      renderHeight: plPlayerController
+                          .videoController
+                          ?.rect
+                          .value
+                          ?.height
+                          .round(),
+                    ),
+''',
+    'PiliNara playback info render-output arguments',
+)
+
+replace(
+    header_control,
+    '''  static void showPlayerInfo(
+    BuildContext context, {
+    required NativePlayer player,
+  }) {
+''',
+    '''  static void showPlayerInfo(
+    BuildContext context, {
+    required NativePlayer player,
+    int? renderWidth,
+    int? renderHeight,
+  }) {
+''',
+    'PiliNara playback info render-output parameters',
+)
+
+replace(
+    header_control,
+    '''                    ListTile(
+                      dense: true,
+                      title: const Text("VideoParams"),
+                      subtitle: Text(state.videoParams.toString()),
+''',
+    '''                    ListTile(
+                      dense: true,
+                      title: const Text("Render Output"),
+                      subtitle: Text(
+                        renderWidth != null && renderHeight != null
+                            ? '\${renderWidth}x\${renderHeight}'
+                            : 'Unavailable',
+                      ),
+                      onTap: () => Utils.copyText(
+                        'Render Output\\n'
+                        '\${renderWidth != null && renderHeight != null ? "\${renderWidth}x\${renderHeight}" : "Unavailable"}',
+                      ),
+                    ),
+                    ListTile(
+                      dense: true,
+                      title: const Text("VideoParams"),
+                      subtitle: Text(state.videoParams.toString()),
+''',
+    'PiliNara playback info render-output row',
+)
+
 print('ALL SOURCE PATCHES APPLIED')
