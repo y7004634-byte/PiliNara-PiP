@@ -1,0 +1,580 @@
+name: LiveContainer embedded SideStore build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [lcss-userfix-build]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: livecontainer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LIVE_CONTAINER_REF: 12377cf3b91d51739a33f14a302e5f522b238593
+  EMBEDDED_SIDESTORE_REF: ff25922e5c13ccfafd83bda5092910d848ebd409
+  MINIMUXER_REF: 98c3c79982f813878e922ab42f9545314a700f0c
+  SIDESIGN_REF: a731c0d5a9a6617c7b385ae493e07ffb7f81cd5d
+  SIDESIGN_GSA_FIX: 35993d7f68950ce00d6bf1fd0fbcaa7bef51dc9c
+  IDEVICE_REF: ebd7dadfc55d1c4facee3d11ecf5b28e20548b57
+  JKTCP_REF: e674e1eee6d5943e13b1eba0bd24a9dd0b2fa020
+
+jobs:
+  source-and-host-build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout NRG v3.0.1 builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/NRG-Wardog/sidestore-auto-refresh.git builder
+          git -C builder checkout --detach 6f0a144936c789bd7557d93ecf752888fddbb256
+
+      - name: Checkout pinned LiveContainer sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/logs
+          git clone --filter=blob:none https://github.com/LiveContainer/LiveContainer.git work/LiveContainer
+          git -C work/LiveContainer checkout --detach "$LIVE_CONTAINER_REF"
+          git -C work/LiveContainer submodule update --init --recursive --depth=1
+
+      - name: Checkout pinned embedded SideStore sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/LiveContainer/SideStore.git work/EmbeddedSideStore
+          git -C work/EmbeddedSideStore checkout --detach "$EMBEDDED_SIDESTORE_REF"
+          git -C work/EmbeddedSideStore submodule update --init --recursive --depth=1
+
+      - name: Checkout pinned idevice
+        uses: actions/checkout@v4
+        with:
+          repository: SideStore/idevice
+          ref: ${{ env.IDEVICE_REF }}
+          path: idevice
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Checkout pinned jktcp
+        uses: actions/checkout@v4
+        with:
+          repository: SideStore/jktcp
+          ref: ${{ env.JKTCP_REF }}
+          path: jktcp
+          fetch-depth: 1
+
+      - name: Verify exact source revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C work/LiveContainer rev-parse HEAD)" = "$LIVE_CONTAINER_REF"
+          test "$(git -C work/EmbeddedSideStore rev-parse HEAD)" = "$EMBEDDED_SIDESTORE_REF"
+          test "$(git -C work/EmbeddedSideStore/Dependencies/minimuxer rev-parse HEAD)" = "$MINIMUXER_REF"
+          test "$(git -C work/EmbeddedSideStore/Dependencies/SideSign rev-parse HEAD)" = "$SIDESIGN_REF"
+          # Verify upstream resolution; never independently checkout or override SideSign.
+          git -C work/EmbeddedSideStore/Dependencies/SideSign fetch --unshallow origin
+          git -C work/EmbeddedSideStore/Dependencies/SideSign merge-base --is-ancestor "$SIDESIGN_GSA_FIX" HEAD
+          printf 'sidestore=%s\nminimuxer=%s\nsidesign=%s\ngsa_fix_ancestor=%s\n' \
+            "$EMBEDDED_SIDESTORE_REF" "$MINIMUXER_REF" "$SIDESIGN_REF" "$SIDESIGN_GSA_FIX" \
+            | tee artifacts/logs/upstream-auth-provenance.txt
+          test "$(git -C idevice rev-parse HEAD)" = "$IDEVICE_REF"
+          test "$(git -C jktcp rev-parse HEAD)" = "$JKTCP_REF"
+
+      - name: Select Xcode 26.4
+        uses: maxim-lobanov/setup-xcode@v1.6.0
+        with:
+          xcode-version: "26.4"
+
+      - name: Run repository checks before patches
+        env:
+          LIVE_CONTAINER_TEST_SOURCE: ${{ github.workspace }}/work/LiveContainer
+          SIDESTORE_TEST_SOURCE: ${{ github.workspace }}/work/EmbeddedSideStore
+          EMBEDDED_SIDESTORE_TEST_SOURCE: ${{ github.workspace }}/work/EmbeddedSideStore
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s builder/tests -v 2>&1 | tee artifacts/logs/repository-tests.log
+
+      - name: Apply userfix2 headless host refresh patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # 1) Route the global/manual/background refresh bridge through the v3
+          #    headless service, rather than PrivateIntentRunner/AppIntents.
+          p = Path("builder/scripts/patch_livecontainer_autorefresh.py")
+          s = p.read_text(encoding="utf-8")
+          old = r'''BRIDGE = r'''
+          # LC_REFRESH_BRIDGE_V2_BEGIN
+          /// Use the action identity present in the combined package's intent metadata.
+          public enum LiveContainerRefreshBridge {
+              public static func refreshAllApps() async throws {
+                  guard #available(iOS 17.0, *) else {
+                      throw NSError(domain: "LiveContainerRefresh.UnsupportedOS", code: 17,
+                          userInfo: [NSLocalizedDescriptionKey: "The embedded automatic refresh bridge requires iOS 17 or later."])
+                  }
+                  try Task.checkCancellation()
+                  try await RefreshHandler.shared.startRefresh(
+                      identifier: "RefreshAllIntent",
+                      mangledName: "16SideStoreSupport20RefreshAllAppsIntentV"
+                  )
+                  try Task.checkCancellation()
+              }
+          }
+          // LC_REFRESH_BRIDGE_V2_END
+          ''''''
+          new = r'''BRIDGE = r'''
+          // LC_REFRESH_BRIDGE_V2_BEGIN
+          /// v3 userfix2: run refreshes through the proven headless SideStore service.
+          /// Non-host apps run first; the LiveContainer host runs last because replacing
+          /// the host can terminate/relaunch the foreground process.
+          public enum LiveContainerRefreshBridge {
+              public static func refreshAllApps() async throws {
+                  guard #available(iOS 17.0, *) else {
+                      throw NSError(domain: "LiveContainerRefresh.UnsupportedOS", code: 17,
+                          userInfo: [NSLocalizedDescriptionKey: "The embedded automatic refresh bridge requires iOS 17 or later."])
+                  }
+                  try Task.checkCancellation()
+                  let snapshot = try await V3ServiceBridge.shared.request(operation: "snapshot")
+                  guard let rows = snapshot["installedApps"] as? [[String: Any]] else {
+                      throw CombinedFailure(operation: "refresh", stage: .serviceReadiness,
+                          code: .invalidResponse, id: UUID().uuidString)
+                  }
+                  let active = rows.filter { $0["isActive"] as? Bool == true }
+                  guard !active.isEmpty else {
+                      throw CombinedFailure(operation: "refresh", stage: .refreshVerification,
+                          code: .missingResult, id: UUID().uuidString, retryable: false)
+                  }
+                  let ordered = active.sorted { lhs, rhs in
+                      let leftHost = lhs["isHost"] as? Bool ?? false
+                      let rightHost = rhs["isHost"] as? Bool ?? false
+                      if leftHost != rightHost { return !leftHost && rightHost }
+                      return (lhs["bundleID"] as? String ?? "") < (rhs["bundleID"] as? String ?? "")
+                  }
+                  let expected = ordered.compactMap { $0["bundleID"] as? String }
+                  UserDefaults(suiteName: "group.com.SideStore.SideStore")?
+                      .set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")
+                  for row in ordered {
+                      try Task.checkCancellation()
+                      try await refreshOne(row)
+                  }
+                  try Task.checkCancellation()
+              }
+
+              private static func refreshOne(_ row: [String: Any]) async throws {
+                  guard let target = row["identifier"] as? String, !target.isEmpty else {
+                      throw CombinedFailure(operation: "refresh", stage: .command,
+                          code: .invalidConfiguration, id: UUID().uuidString)
+                  }
+                  let started = try await V3ServiceBridge.shared.request(
+                      operation: "opStart",
+                      payload: ["kind": "refreshApp", "target": target]
+                  )
+                  guard let session = started["session"] as? String, !session.isEmpty else {
+                      throw CombinedFailure(operation: "refresh", stage: .command,
+                          code: .invalidResponse, id: UUID().uuidString)
+                  }
+                  var reply = started
+                  let deadline = Date().addingTimeInterval(540)
+                  while true {
+                      try Task.checkCancellation()
+                      let state = reply["state"] as? String ?? "working"
+                      switch state {
+                      case "completed":
+                          return
+                      case "waitingForAuthentication":
+                          throw CombinedFailure(operation: "refresh", stage: .authentication,
+                              code: .notReady, id: UUID().uuidString, retryable: false)
+                      case "failed":
+                          let stage = (reply["stage"] as? String).flatMap(CombinedFailure.Stage.init(rawValue:)) ?? .refreshVerification
+                          let code = (reply["code"] as? String).flatMap(CombinedFailure.Code.init(rawValue:)) ?? .failed
+                          throw CombinedFailure(operation: "refresh", stage: stage,
+                              code: code, id: UUID().uuidString)
+                      case "cancelled":
+                          throw CombinedFailure(operation: "refresh", stage: .command,
+                              code: .cancelled, id: UUID().uuidString, retryable: false)
+                      case "awaitingPrompt", "requiresSource":
+                          throw CombinedFailure(operation: "refresh", stage: .command,
+                              code: .unsupported, id: UUID().uuidString, retryable: false)
+                      default:
+                          break
+                      }
+                      guard Date() < deadline else {
+                          throw CombinedFailure(operation: "refresh", stage: .command,
+                              code: .timedOut, id: UUID().uuidString, retryable: true)
+                      }
+                      try await Task.sleep(nanoseconds: 250_000_000)
+                      reply = try await V3ServiceBridge.shared.request(operation: "opPoll", target: session)
+                  }
+              }
+          }
+          // LC_REFRESH_BRIDGE_V2_END
+          ''''''
+          if old not in s:
+              raise SystemExit("userfix2 bridge anchor not found")
+          p.write_text(s.replace(old, new, 1), encoding="utf-8")
+
+          # 2) Allow the host to use refreshApp and make targeted refresh emit the
+          #    same verified manifest/host-handoff state expected by the scheduler.
+          p = Path("builder/scripts/templates/v3_headless_runtime.swift")
+          s = p.read_text(encoding="utf-8")
+          guard = '            guard app.isActive, app.bundleIdentifier != StoreApp.altstoreAppID else { throw V3SideStoreServiceError.unsupported }\n'
+          if guard not in s:
+              raise SystemExit("userfix2 host guard anchor not found")
+          s = s.replace(guard,
+              '            guard app.isActive else { throw V3SideStoreServiceError.unsupported }\\n', 1)
+
+          anchor = '''    private struct V3OpDriver: @unchecked Sendable {
+          '''
+          helper = r'''    private func persistRefreshResult(app: InstalledApp, result: Result<InstalledApp, Error>) {
+              guard let defaults = UserDefaults(suiteName: "group.com.SideStore.SideStore"),
+                    let runID = defaults.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+                    UUID(uuidString: runID) != nil else { return }
+              let expected = defaults.stringArray(forKey: "liveContainerAutoRefreshExpectedIDs") ?? [app.bundleIdentifier]
+              var entries: [[String: Any]] = []
+              if let existing = defaults.dictionary(forKey: "liveContainerAutoRefreshVerification"),
+                 existing["run_id"] as? String == runID {
+                  entries = existing["results"] as? [[String: Any]] ?? []
+              }
+              entries.removeAll { $0["bundle_id"] as? String == app.bundleIdentifier }
+              var item: [String: Any] = ["bundle_id": app.bundleIdentifier]
+              switch result {
+              case .success(let refreshed):
+                  item["success"] = true
+                  item["refreshed_date"] = refreshed.refreshedDate
+                  item["expiration_date"] = refreshed.expirationDate
+              case .failure(let error):
+                  let failure = CombinedFailure.capture(error, operation: "refresh",
+                                                        stage: .refreshVerification, id: runID)
+                  item["success"] = false
+                  item["error_code"] = failure.underlyingCode
+                  item["error_domain"] = failure.underlyingDomain
+                  item["failure"] = failure.wire
+              }
+              entries.append(item)
+              let order = Dictionary(uniqueKeysWithValues: expected.enumerated().map { ($0.element, $0.offset) })
+              entries.sort { (order[$0["bundle_id"] as? String ?? ""] ?? Int.max) <
+                             (order[$1["bundle_id"] as? String ?? ""] ?? Int.max) }
+              defaults.set([
+                  "version": 2,
+                  "schema": "LiveContainerRefreshManifestV2",
+                  "run_id": runID,
+                  "expected_ids": expected,
+                  "results": entries,
+                  "date": Date(),
+                  "host_handoff": defaults.bool(forKey: "liveContainerAutoRefreshHostHandoff")
+              ], forKey: "liveContainerAutoRefreshVerification")
+          }
+
+          private func prepareHostHandoffIfNeeded(_ app: InstalledApp) {
+              guard app.bundleIdentifier == StoreApp.altstoreAppID,
+                    let defaults = UserDefaults(suiteName: "group.com.SideStore.SideStore"),
+                    let runID = defaults.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+                    UUID(uuidString: runID) != nil else { return }
+              defaults.set(true, forKey: "liveContainerAutoRefreshHostHandoff")
+              defaults.set(runID, forKey: "liveContainerAutoRefreshHostHandoffRunID")
+              defaults.set(Date(), forKey: "liveContainerAutoRefreshHostHandoffStartedAt")
+              defaults.set(app.expirationDate, forKey: "liveContainerAutoRefreshHostPreviousExpiration")
+          }
+
+          '''
+          if anchor not in s:
+              raise SystemExit("userfix2 helper anchor not found")
+          s = s.replace(anchor, helper + anchor, 1)
+
+          old = '''            return V3OpDriver(kind: kind) {
+                          let group = RefreshGroup(context: baseContext)
+          '''
+          new = '''            return V3OpDriver(kind: kind) {
+                          self.prepareHostHandoffIfNeeded(app)
+                          let group = RefreshGroup(context: baseContext)
+          '''
+          if old not in s:
+              raise SystemExit("userfix2 refresh closure anchor not found")
+          s = s.replace(old, new, 1)
+
+          old = '''                        guard let result = results[app.bundleIdentifier] else {
+                              self.sessions[id]?.terminal = ["state": "failed", "stage": "refreshVerification", "code": "unavailable"]
+                              return
+                          }
+                          if case .failure(let error) = result {
+          '''
+          new = '''                        guard let result = results[app.bundleIdentifier] else {
+                              self.sessions[id]?.terminal = ["state": "failed", "stage": "refreshVerification", "code": "unavailable"]
+                              return
+                          }
+                          self.persistRefreshResult(app: app, result: result)
+                          if case .failure(let error) = result {
+          '''
+          if old not in s:
+              raise SystemExit("userfix2 result anchor not found")
+          s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding="utf-8")
+          print("userfix2 builder patch applied")
+          PY
+
+          grep -Fq 'v3 userfix2: run refreshes through the proven headless SideStore service' builder/scripts/patch_livecontainer_autorefresh.py
+          grep -Fq 'prepareHostHandoffIfNeeded' builder/scripts/templates/v3_headless_runtime.swift
+          grep -Fq 'LiveContainerRefreshManifestV2' builder/scripts/templates/v3_headless_runtime.swift
+
+      # Fail on generated Swift/configuration errors BEFORE compiling Rust/iOS.
+      - name: Apply and verify host integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            python3 builder/scripts/patch_livecontainer_autorefresh.py work/LiveContainer
+            python3 builder/scripts/patch_livecontainer_autorefresh.py work/LiveContainer
+            python3 builder/scripts/patch_embedded_sidestore_startup.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_embedded_sidestore_startup.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_guest_return.py work/LiveContainer
+            python3 builder/scripts/patch_guest_return.py work/LiveContainer
+            python3 builder/scripts/patch_app_layout.py --v3-grid work/LiveContainer
+            python3 builder/scripts/patch_app_layout.py --v3-grid work/LiveContainer
+            python3 builder/scripts/patch_v3_unified_shell.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_v3_unified_shell.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_v3_service.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_v3_service.py work/LiveContainer work/EmbeddedSideStore
+            swiftc -frontend -parse work/LiveContainer/MultitaskSupport/MultitaskAppWindow.swift
+            swiftc -frontend -parse work/LiveContainer/MultitaskSupport/MultitaskDockView.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Models/AppLayoutStyle.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/AppList/LCGridAppCell.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+            python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("background_patch", "builder/scripts/patch_background_automation.py")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          module.patch_background_operation(Path("work/EmbeddedSideStore"))
+          module.patch_console_log(Path("work/EmbeddedSideStore"))
+          PY
+            python3 builder/scripts/patch_combined_refresh_contract.py work/EmbeddedSideStore
+            python3 builder/scripts/patch_combined_refresh_contract.py work/EmbeddedSideStore
+            python3 builder/scripts/patch_combined_service_startup.py work/LiveContainer work/EmbeddedSideStore v3
+            python3 builder/scripts/patch_combined_service_startup.py work/LiveContainer work/EmbeddedSideStore v3
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/App/AppDelegate.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/App/LiveContainerAutoRefreshAlarm.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/Settings/LCEmbeddedSideStoreRefreshView.swift
+            swiftc -frontend -parse work/LiveContainer/SideStoreSupport/SideStore.swift
+            swiftc -frontend -parse work/EmbeddedSideStore/SideStore/Core/Operations/StandaloneOperations/BackgroundRefreshAppsOperation.swift
+            swiftc -frontend -parse work/EmbeddedSideStore/SideStore/Utils/iostreams/ConsoleLog.swift
+            swiftc -frontend -parse work/EmbeddedSideStore/AltStore/AppDelegate.swift
+            swiftc -frontend -parse work/EmbeddedSideStore/AltStore/Core/Model/DatabaseManager/DatabaseManager.swift
+            plutil -lint work/LiveContainer/LiveContainer/Info.plist
+            plutil -extract BGTaskSchedulerPermittedIdentifiers.0 raw work/LiveContainer/LiveContainer/Info.plist
+            grep -Fq 'LIVE_REFRESH_LOG_RETENTION_V1' work/EmbeddedSideStore/SideStore/Utils/iostreams/ConsoleLog.swift
+          } 2>&1 | tee artifacts/logs/host-preflight.log
+
+      - name: Execute real layout regression on final generated source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C builder fetch --no-tags origin 7d8ae12905f8baa6e0ecc4dbdd3f25e2aa0e43fa
+          python3 builder/scripts/run_issue25_rendering.py --livecontainer work/LiveContainer \
+            --v3-source work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift \
+            --output artifacts/layout-evidence 2>&1 | tee artifacts/logs/layout-rendering.log
+
+      - name: Preserve real layout measurements and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-v3-layout-evidence
+          path: |
+            artifacts/layout-evidence/**/*.json
+            artifacts/layout-evidence/**/*.png
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Build unified host before transport compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project work/LiveContainer/LiveContainer.xcodeproj \
+            -scheme LiveContainer -sdk iphoneos -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/livecontainer-derived-data" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee artifacts/logs/livecontainer-build.log
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          if ! command -v ldid >/dev/null 2>&1; then HOMEBREW_NO_AUTO_UPDATE=1 brew install ldid; fi
+          if ! command -v bindgen >/dev/null 2>&1; then cargo install --locked bindgen-cli --version 0.72.1; fi
+          rustup target add aarch64-apple-ios
+
+      - name: Apply focused CoreDevice transport patches
+        run: |
+          set -euo pipefail
+          python3 builder/scripts/patch_jktcp_reliability.py jktcp
+          python3 builder/scripts/patch_coredevice_idevice.py idevice jktcp
+          ! grep -R -E 'rppairing_connect_quic|create_quic_listener|quinn::' \
+            idevice/ffi/src/tunnel_provider.rs idevice/idevice/src/tunnel.rs
+          grep -Fq 'packet.extend_from_slice(CDTUNNEL_MAGIC)' idevice/idevice/src/tunnel.rs
+          grep -Fq 'effective_mss = negotiated_mtu.saturating_sub(60).min(1340)' idevice/ffi/src/tunnel_provider.rs
+          grep -Fq 'HeartbeatClient::connect' idevice/ffi/src/tunnel_provider.rs
+          grep -Fq 'run_sync_local(async move { fd.write_entire(data_slice).await })' idevice/ffi/src/afc.rs
+          grep -Fq 'let data = unsafe { Box::from_raw(slice) };' idevice/ffi/src/lib.rs
+
+      - name: Test patched transport sources
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path jktcp/Cargo.toml
+          cargo fmt --manifest-path idevice/ffi/Cargo.toml
+          git -C jktcp diff --check
+          git -C idevice diff --check
+          cargo test --manifest-path jktcp/Cargo.toml --lib -- --skip tests::local_tcp --skip tests::handle_speed
+          cargo check --manifest-path idevice/ffi/Cargo.toml --features obfuscate
+
+      - name: Build idevice for iOS
+        working-directory: idevice
+        run: |
+          set -euo pipefail
+          BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(xcrun --sdk iphoneos --show-sdk-path)" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            cargo build --release --target aarch64-apple-ios --features obfuscate --manifest-path ffi/Cargo.toml
+          test -f target/aarch64-apple-ios/release/libidevice_ffi.a
+          test -f ffi/idevice.h
+          grep -Fq 'tunnel_create_usb' ffi/idevice.h
+          grep -Fq 'tunnel_heartbeat_is_active' ffi/idevice.h
+          grep -Fq 'idevice_set_transport_log_callback' ffi/idevice.h
+          xcrun nm -arch arm64 -g target/aarch64-apple-ios/release/libidevice_ffi.a \
+            >/tmp/current-idevice-symbols.txt 2>/tmp/current-nm-reader-warnings.txt || true
+          grep -E '[[:space:]][Tt][[:space:]]_lockdown_diag_rust_log$' /tmp/current-idevice-symbols.txt
+          grep -E '[[:space:]][Tt][[:space:]]_idevice_set_transport_log_callback$' /tmp/current-idevice-symbols.txt
+          rm -rf swift/IDevice.xcframework
+          cp ffi/idevice.h swift/include/idevice.h
+          xcodebuild -create-xcframework -library target/aarch64-apple-ios/release/libidevice_ffi.a \
+            -headers swift/include -output swift/IDevice.xcframework
+
+      - name: Patch combined transport and inject local idevice
+        shell: bash
+        run: |
+          set -euo pipefail
+          MUX=work/EmbeddedSideStore/Dependencies/minimuxer
+          mkdir -p "$MUX/DeviceGateway/LocalBinary"
+          rm -rf "$MUX/DeviceGateway/LocalBinary/IDevice.xcframework"
+          cp -R idevice/swift/IDevice.xcframework "$MUX/DeviceGateway/LocalBinary/IDevice.xcframework"
+          python3 builder/scripts/patch_combined_transport.py "$MUX"
+          python3 builder/scripts/patch_local_idevice_package.py "$MUX"
+          git -C "$MUX" diff --binary >"$RUNNER_TEMP/combined-transport-first.diff"
+          python3 -c 'import hashlib, pathlib, sys; root = pathlib.Path(sys.argv[1]); print([(str(p.relative_to(root)), hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted(root.rglob("*.swift"))])' "$MUX" >"$RUNNER_TEMP/combined-swift-first.txt"
+          python3 builder/scripts/patch_combined_transport.py "$MUX"
+          python3 builder/scripts/patch_local_idevice_package.py "$MUX"
+          git -C "$MUX" diff --binary >"$RUNNER_TEMP/combined-transport-second.diff"
+          python3 -c 'import hashlib, pathlib, sys; root = pathlib.Path(sys.argv[1]); print([(str(p.relative_to(root)), hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted(root.rglob("*.swift"))])' "$MUX" >"$RUNNER_TEMP/combined-swift-second.txt"
+          cmp "$RUNNER_TEMP/combined-transport-first.diff" "$RUNNER_TEMP/combined-transport-second.diff"
+          cmp "$RUNNER_TEMP/combined-swift-first.txt" "$RUNNER_TEMP/combined-swift-second.txt"
+          python3 builder/scripts/patch_combined_service_startup.py --transport "$MUX"
+          python3 builder/scripts/patch_combined_service_startup.py --transport "$MUX"
+          git -C "$MUX" diff --check
+          while IFS= read -r -d '' source; do swiftc -frontend -parse "$source"; done < <(find "$MUX" -type f -name '*.swift' -not -path '*/.build/*' -print0)
+          swift package --package-path "$MUX/DeviceGateway" dump-package >"$RUNNER_TEMP/combined-gateway-package.json"
+          # Auth/configuration is upstream-owned and must remain byte-identical.
+          git -C work/EmbeddedSideStore diff --exit-code -- \
+            SideStore/Core/Auth SideStore/Core/Anisette \
+            SideStore/Core/Operations/StandaloneOperations/SignInOperation.swift
+          git -C work/EmbeddedSideStore/Dependencies/SideSign diff --exit-code
+
+      - name: Build host and embedded SideStore source targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$HOME/Library/Caches/org.swift.swiftpm/artifacts/https___github_com_krzyzanowskim_OpenSSL_releases_download_3_6_2000_OpenSSL_xcframework_zip"
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"/*/SourcePackages/artifacts/openssl
+          artifact="$HOME/Library/Caches/org.swift.swiftpm/artifacts/https___github_com_krzyzanowskim_OpenSSL_releases_download_3_6_2000_OpenSSL_xcframework_zip"
+          resolved=0
+          for attempt in 1 2 3; do
+            rm -rf "$artifact"
+            rm -rf "$HOME/Library/Developer/Xcode/DerivedData"/*/SourcePackages/artifacts/openssl 2>/dev/null || true
+            rm -rf "$RUNNER_TEMP/embedded-sidestore-derived-data/SourcePackages/artifacts/openssl"
+            if xcodebuild -resolvePackageDependencies -disablePackageRepositoryCache \
+                -project work/EmbeddedSideStore/AltStore.xcodeproj -scheme SideStore \
+                -derivedDataPath "$RUNNER_TEMP/embedded-sidestore-derived-data"; then resolved=1; break; fi
+            sleep 2
+          done
+          test "$resolved" -eq 1
+          xcodebuild -project work/EmbeddedSideStore/AltStore.xcodeproj \
+            -scheme SideStore -sdk iphoneos -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/embedded-sidestore-derived-data" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee artifacts/logs/embedded-sidestore-build.log
+
+      - name: Package and verify combined LiveContainer plus SideStore
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 builder/scripts/combined_build_evidence.py identity --product v3.0.1 \
+            "$RUNNER_TEMP/livecontainer-derived-data/Build/Products/Release-iphoneos/LiveContainer.app" \
+            "$RUNNER_TEMP/embedded-sidestore-derived-data/Build/Products/Release-iphoneos/SideStore.app"
+          python3 builder/scripts/package_livecontainer_combined.py \
+            --root work/LiveContainer \
+            --host "$RUNNER_TEMP/livecontainer-derived-data/Build/Products/Release-iphoneos/LiveContainer.app" \
+            --side "$RUNNER_TEMP/embedded-sidestore-derived-data/Build/Products/Release-iphoneos/SideStore.app" \
+            --output artifacts/LiveContainer-SideStore-AutoRefresh.ipa 2>&1 | tee artifacts/logs/combined-packaging.log
+          python3 builder/scripts/patch_combined_refresh_contract.py --verify-ipa artifacts/LiveContainer-SideStore-AutoRefresh.ipa \
+            2>&1 | tee artifacts/logs/runtime-contract-verification.log
+          printf 'builder_commit=%s\n' "$GITHUB_SHA" > artifacts/builder-commit.txt
+          python3 builder/scripts/combined_build_evidence.py collect --product v3.0.1 \
+            --ipa artifacts/LiveContainer-SideStore-AutoRefresh.ipa --output artifacts/debug-evidence --source work/LiveContainer --side-source work/EmbeddedSideStore \
+            "$RUNNER_TEMP/livecontainer-derived-data/Build/Products/Release-iphoneos" \
+            "$RUNNER_TEMP/embedded-sidestore-derived-data/Build/Products/Release-iphoneos"
+
+      - name: Verify embedded CoreDevice transport executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          ipa = Path('artifacts/LiveContainer-SideStore-AutoRefresh.ipa')
+          embedded = 'Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore'
+          with zipfile.ZipFile(ipa) as archive:
+              executable = archive.read(embedded)
+          assert executable[:4] == b'\xcf\xfa\xed\xfe', 'Expected embedded arm64 Mach-O'
+          assert b'no ipsec interface (required for lockdown on iOS 26.4+)' not in executable, 'Obsolete IPSec guard remains'
+          markers = ('[SIDESTORE_COREDEVICE] PAIRING_MODE_SELECTED', '[SIDESTORE_COREDEVICE] TRANSPORT_CREATE_PASS',
+                     '[SIDESTORE_COREDEVICE] ENDPOINT_SELECT', '[SIDESTORE_COREDEVICE] LOCALVPN_UTUN_ACCEPTED',
+                     '[SIDESTORE_COREDEVICE] JKTCP_MSS_CONFIG')
+          for marker in markers:
+              assert marker.encode() in executable, f'Embedded transport marker missing: {marker}'
+          Path('artifacts/logs/embedded-transport-verification.txt').write_text(
+              f'executable={embedded}\n' + '\n'.join(markers) + '\nverification=PASS\n')
+          PY
+
+      - name: Upload combined LiveContainer IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveContainer-SideStore-AutoRefresh-IPA
+          path: |
+            artifacts/LiveContainer-SideStore-AutoRefresh.ipa
+            artifacts/LiveContainer-SideStore-AutoRefresh.verification.json
+            artifacts/LiveContainer-SideStore-AutoRefresh.runtime-verification.json
+            artifacts/builder-commit.txt
+            artifacts/logs/upstream-auth-provenance.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload source-build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: livecontainer-autorefresh-build-evidence
+          path: artifacts/logs
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Preserve matching crash symbols and generated startup source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-v3-debug-evidence
+          path: artifacts/debug-evidence
+          if-no-files-found: warn
+          retention-days: 90
