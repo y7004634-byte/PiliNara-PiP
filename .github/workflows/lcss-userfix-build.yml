@@ -457,8 +457,8 @@ jobs:
               '"host_handoff": false',
               1
           )
-          anchor = '                  let store = defaults()\n                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),\n'
-          repl = '                  let store = defaults()\n                  store.set(false, forKey: "liveContainerAutoRefreshHostHandoff")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffRunID")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffStartedAt")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostPreviousExpiration")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")\n                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),\n'
+          anchor = 'let store = defaults()'
+          repl = 'let store = defaults()\n                  store.set(false, forKey: "liveContainerAutoRefreshHostHandoff")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffRunID")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffStartedAt")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostPreviousExpiration")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")'
           if anchor not in s:
               raise SystemExit("userfix6 bridge cleanup anchor not found")
           s = s.replace(anchor, repl, 1)
