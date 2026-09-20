@@ -102,23 +102,31 @@ cd "$WORK/PiliNara"
 
 echo '[5/7] Build unsigned iOS IPA'
 set +e
-flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5872 --dart-define-from-file=pili_release.json --no-pub
+flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5873 --dart-define-from-file=pili_release.json --no-pub
 flutter_status=$?
 set -e
-if [ "$flutter_status" -ne 0 ]; then
-  # Flutter/Xcode 26 may return a provisioning-team error after the unsigned
-  # Xcode compilation has already completed. This workspace is fresh, so an
-  # existing Runner.app here can only come from the current build. Accept it
-  # only when both the bundle and executable were actually produced.
-  if [ -d build/ios/iphoneos/Runner.app ] && [ -f build/ios/iphoneos/Runner.app/Runner ]; then
-    echo "[warn] flutter build returned $flutter_status after producing an unsigned Runner.app; continuing with artifact verification"
-  else
-    exit "$flutter_status"
-  fi
+
+APP_BUNDLE="build/ios/iphoneos/Runner.app"
+if [ "$flutter_status" -ne 0 ] && [ ! -f "$APP_BUNDLE/Runner" ]; then
+  echo "[warn] Flutter post-build/provisioning check failed before staging Runner.app."
+  echo "[warn] Falling back to an explicit unsigned Xcode build with signing disabled."
+  rm -rf build/ios-manual
+  xcodebuild     -workspace ios/Runner.xcworkspace     -scheme Runner     -configuration Release     -sdk iphoneos     -destination 'generic/platform=iOS'     -derivedDataPath build/ios-manual     CODE_SIGNING_ALLOWED=NO     CODE_SIGNING_REQUIRED=NO     CODE_SIGN_IDENTITY=''     DEVELOPMENT_TEAM=''     build
+  APP_BUNDLE="build/ios-manual/Build/Products/Release-iphoneos/Runner.app"
+elif [ "$flutter_status" -ne 0 ]; then
+  echo "[warn] flutter build returned $flutter_status after producing an unsigned Runner.app; continuing"
 fi
-ln -sf ./build/ios/iphoneos Payload
+
+if [ ! -f "$APP_BUNDLE/Runner" ]; then
+  echo "[error] unsigned Runner.app was not produced"
+  exit 1
+fi
+
+rm -rf Payload
+mkdir -p Payload
+cp -R "$APP_BUNDLE" Payload/Runner.app
 find Payload/Runner.app/Frameworks -type d -name '*.framework' -exec codesign --force --sign - --preserve-metadata=identifier,entitlements {} \;
-zip -r9 PiliNara_ios_PiP_raw.ipa Payload/runner.app
+zip -r9 PiliNara_ios_PiP_raw.ipa Payload/Runner.app
 
 echo '[6/7] Apply Traditional Chinese IPA patch'
 python3 -m venv "$WORK/zh-tw-venv"
