@@ -42,13 +42,13 @@ abstract final class PiliNaraNativeBridge {
 
   static IosThermalState latestThermalState = IosThermalState.unknown;
 
-  static Stream<IosThermalState>? _thermalStates;
+  static Stream<IosThermalState>? _sharedThermalStates;
 
   static Stream<IosThermalState> get thermalStates {
     if (!Platform.isIOS) {
       return const Stream<IosThermalState>.empty();
     }
-    return _thermalStates ??= _thermal
+    final shared = _sharedThermalStates ??= _thermal
         .receiveBroadcastStream()
         .map(IosThermalState.fromNative)
         .map((state) {
@@ -56,6 +56,22 @@ abstract final class PiliNaraNativeBridge {
           return state;
         })
         .asBroadcastStream();
+
+    // EventChannel itself is hot/broadcast. Replay the latest known value to
+    // every new listener so the render scaler cannot miss the initial thermal
+    // event just because another widget subscribed first.
+    return Stream<IosThermalState>.multi((controller) {
+      final cached = latestThermalState;
+      if (cached != IosThermalState.unknown) {
+        controller.add(cached);
+      }
+      final subscription = shared.listen(
+        controller.add,
+        onError: controller.addError,
+        onDone: controller.close,
+      );
+      controller.onCancel = subscription.cancel;
+    });
   }
 
   static Future<String> remux({
