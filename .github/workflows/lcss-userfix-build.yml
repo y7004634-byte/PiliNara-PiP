@@ -448,10 +448,10 @@ jobs:
           #    profiles in-place. It does not self-reinstall the host.
           p = Path("builder/scripts/patch_livecontainer_autorefresh.py")
           s = p.read_text(encoding="utf-8")
-          old = '                      if row["isHost"] as? Bool == true {\n                          prepareHostHandoff(row: row, runID: runID)\n                      }\n'
-          if old not in s:
+          if 'prepareHostHandoff(row: row, runID: runID)' not in s:
               raise SystemExit("userfix6 host-handoff call anchor not found")
-          s = s.replace(old, "", 1)
+          s = s.replace('prepareHostHandoff(row: row, runID: runID)',
+                        '// userfix6: .refresh is in-place; no host handoff', 1)
           s = s.replace(
               '"host_handoff": defaults().bool(forKey: "liveContainerAutoRefreshHostHandoff")',
               '"host_handoff": false',
