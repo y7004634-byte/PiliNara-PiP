@@ -8,6 +8,7 @@ import 'package:PiliPlus/pages/video/controller.dart';
 import 'package:PiliPlus/pages/download/universal_export_view.dart';
 import 'package:PiliPlus/pages/video/widgets/full_danmaku_sheet.dart';
 import 'package:PiliPlus/utils/pilinara_native_bridge.dart';
+import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/share_utils.dart';
 import 'package:PiliPlus/utils/subtitle_utils.dart';
 import 'package:PiliPlus/utils/video_utils.dart';
@@ -80,22 +81,44 @@ abstract final class UniversalMediaExport {
     var exportSubtitle = false;
     var exportDanmaku = false;
 
-    final options = await showDialog<_UniversalExportOptions>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setState) {
+    _UniversalExportOptions? options;
+    await PageUtils.showVideoBottomSheet(
+      context,
+      maxWidth: 560,
+      child: StatefulBuilder(
+        builder: (sheetContext, setState) {
           final codecs = codecsFor(selectedQuality);
           if (!codecs.contains(selectedCodec)) {
             selectedCodec = codecs.firstOrNull;
           }
+          final theme = Theme.of(sheetContext);
 
-          return AlertDialog(
-            title: const Text('下载通用档案'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          return Material(
+            color: theme.colorScheme.surface,
+            child: SafeArea(
+              top: false,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
                 children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          '下载通用档案',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '关闭',
+                        onPressed: () => Navigator.of(sheetContext).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
                   SegmentedButton<bool>(
                     segments: const [
                       ButtonSegment<bool>(
@@ -176,36 +199,33 @@ abstract final class UniversalMediaExport {
                       () => exportDanmaku = value ?? false,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   Text(
                     audioOnly
                         ? '仅下载原始音讯并快速封装，不重新编码。'
                         : '影片与音讯直接快速封装成 MP4，不重新编码、不降低画质。',
-                    style: Theme.of(context).textTheme.bodySmall,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: audioOnly || selectedCodec != null
+                        ? () {
+                            options = _UniversalExportOptions(
+                              audioOnly: audioOnly,
+                              quality: selectedQuality,
+                              codec: selectedCodec,
+                              exportSubtitle: exportSubtitle,
+                              exportDanmaku: exportDanmaku,
+                            );
+                            Navigator.of(sheetContext).pop();
+                          }
+                        : null,
+                    icon: const Icon(Icons.download),
+                    label: const Text('开始下载'),
                   ),
                 ],
               ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: audioOnly || selectedCodec != null
-                    ? () => Navigator.of(dialogContext).pop(
-                          _UniversalExportOptions(
-                            audioOnly: audioOnly,
-                            quality: selectedQuality,
-                            codec: selectedCodec,
-                            exportSubtitle: exportSubtitle,
-                            exportDanmaku: exportDanmaku,
-                          ),
-                        )
-                    : null,
-                child: const Text('下载'),
-              ),
-            ],
           );
         },
       ),
@@ -358,6 +378,7 @@ abstract final class UniversalMediaExport {
       }
 
       SmartDialog.dismiss();
+      UniversalExportStore.notifyChanged();
       SmartDialog.showToast(
         '下载完成，已保存到「离线缓存 > 通用档案」',
         displayTime: const Duration(seconds: 3),
