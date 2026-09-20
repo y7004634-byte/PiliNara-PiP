@@ -444,39 +444,24 @@ jobs:
           p.write_text(s, encoding="utf-8")
 
           print("userfix5 builder patch applied")
-          # 6) The current SideStore .refresh pipeline refreshes provisioning
-          #    profiles in-place; it does NOT self-reinstall the host app. Therefore
-          #    host-handoff/relaunch verification is incorrect for this route.
-          #    Remove that legacy state and verify the headless operation result directly.
+          # 6) The current SideStore .refresh pipeline updates provisioning
+          #    profiles in-place. It does not self-reinstall the host.
           p = Path("builder/scripts/patch_livecontainer_autorefresh.py")
           s = p.read_text(encoding="utf-8")
-          s = s.replace(
-              '''                      if row["isHost"] as? Bool == true {
-                          prepareHostHandoff(row: row, runID: runID)
-                      }
-''',
-              '',
-              1
-          )
+          old = '                      if row["isHost"] as? Bool == true {\n                          prepareHostHandoff(row: row, runID: runID)\n                      }\n'
+          if old not in s:
+              raise SystemExit("userfix6 host-handoff call anchor not found")
+          s = s.replace(old, "", 1)
           s = s.replace(
               '"host_handoff": defaults().bool(forKey: "liveContainerAutoRefreshHostHandoff")',
               '"host_handoff": false',
               1
           )
-          bridge_anchor = '''                  let store = defaults()
-                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
-'''
-          bridge_repl = '''                  let store = defaults()
-                  store.set(false, forKey: "liveContainerAutoRefreshHostHandoff")
-                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffRunID")
-                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffStartedAt")
-                  store.removeObject(forKey: "liveContainerAutoRefreshHostPreviousExpiration")
-                  store.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")
-                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
-'''
-          if bridge_anchor not in s:
+          anchor = '                  let store = defaults()\n                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),\n'
+          repl = '                  let store = defaults()\n                  store.set(false, forKey: "liveContainerAutoRefreshHostHandoff")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffRunID")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffStartedAt")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostPreviousExpiration")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")\n                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),\n'
+          if anchor not in s:
               raise SystemExit("userfix6 bridge cleanup anchor not found")
-          s = s.replace(bridge_anchor, bridge_repl, 1)
+          s = s.replace(anchor, repl, 1)
           p.write_text(s, encoding="utf-8")
 
           p = Path("builder/scripts/templates/v3_headless_runtime.swift")
@@ -486,24 +471,11 @@ jobs:
 
           p = Path("builder/scripts/templates/livecontainer_refresh_scheduler.swift")
           s = p.read_text(encoding="utf-8")
-          register_anchor = '''        hostBundle = Bundle.main
-          '''
-          register_repl = '''        hostBundle = Bundle.main
-                  // userfix6: the headless .refresh route updates provisioning profiles
-                  // in-place and does not replace/relaunch the host app.
-                  defaults.set(false, forKey: hostHandoffKey)
-                  defaults.removeObject(forKey: hostHandoffRunKey)
-                  defaults.removeObject(forKey: hostHandoffStartedKey)
-                  defaults.removeObject(forKey: hostPreviousExpirationKey)
-                  defaults.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")
-                  if defaults.string(forKey: healthStateKey)?.hasPrefix("HOST_REFRESH_") == true {
-                      defaults.set("IDLE", forKey: healthStateKey)
-                      defaults.removeObject(forKey: lastErrorKey)
-                  }
-          '''
-          if register_anchor not in s:
+          anchor = '        hostBundle = Bundle.main\n'
+          repl = '        hostBundle = Bundle.main\n        defaults.set(false, forKey: hostHandoffKey)\n        defaults.removeObject(forKey: hostHandoffRunKey)\n        defaults.removeObject(forKey: hostHandoffStartedKey)\n        defaults.removeObject(forKey: hostPreviousExpirationKey)\n        defaults.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")\n        if defaults.string(forKey: healthStateKey)?.hasPrefix("HOST_REFRESH_") == true {\n            defaults.set("IDLE", forKey: healthStateKey)\n            defaults.removeObject(forKey: lastErrorKey)\n        }\n'
+          if anchor not in s:
               raise SystemExit("userfix6 scheduler register anchor not found")
-          s = s.replace(register_anchor, register_repl, 1)
+          s = s.replace(anchor, repl, 1)
           p.write_text(s, encoding="utf-8")
 
           print("userfix6 in-place host refresh patch applied")
