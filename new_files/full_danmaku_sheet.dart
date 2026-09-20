@@ -8,6 +8,7 @@ import 'package:PiliPlus/grpc/dm.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/utils/utils.dart';
+import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:flutter/material.dart';
 
 abstract final class DanmakuArchiveService {
@@ -126,23 +127,19 @@ abstract final class DanmakuArchiveService {
   }
 }
 
-Future<void> showFullDanmakuListSheet(
+Future<void>? showFullDanmakuListSheet(
   BuildContext context, {
   required int cid,
   required int durationMs,
   required PlPlayerController playerController,
 }) {
-  return showModalBottomSheet<void>(
-    context: context,
-    useSafeArea: true,
-    isScrollControlled: true,
-    builder: (_) => FractionallySizedBox(
-      heightFactor: 0.82,
-      child: _FullDanmakuListSheet(
-        cid: cid,
-        durationMs: durationMs,
-        playerController: playerController,
-      ),
+  return PageUtils.showVideoBottomSheet(
+    context,
+    maxWidth: 640,
+    child: _FullDanmakuListSheet(
+      cid: cid,
+      durationMs: durationMs,
+      playerController: playerController,
     ),
   );
 }
