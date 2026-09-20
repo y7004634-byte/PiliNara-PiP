@@ -15,7 +15,9 @@ final class PiliNaraNativeBridge: NSObject, FlutterStreamHandler {
       name: "com.pilinara.tw/thermal",
       binaryMessenger: messenger
     )
-    registrar.addMethodCallDelegate(instance, channel: method)
+    method.setMethodCallHandler { call, result in
+      instance.handle(call, result: result)
+    }
     thermal.setStreamHandler(instance)
     NotificationCenter.default.addObserver(
       instance,
