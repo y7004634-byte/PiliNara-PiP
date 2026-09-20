@@ -268,7 +268,6 @@ abstract final class UniversalMediaExport {
 
     SmartDialog.showLoading(
       msg: options.audioOnly ? '正在下载音讯…' : '正在下载影片与音讯…',
-      clickMaskDismiss: false,
     );
 
     final workRoot = await getTemporaryDirectory();
@@ -308,7 +307,6 @@ abstract final class UniversalMediaExport {
       SmartDialog.dismiss();
       SmartDialog.showLoading(
         msg: options.audioOnly ? '正在快速封装 M4A…' : '正在快速封装 MP4…',
-        clickMaskDismiss: false,
       );
 
       final resultPath = await PiliNaraNativeBridge.remux(
