@@ -9,6 +9,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 abstract final class UniversalExportStore {
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
+
+  static void notifyChanged() {
+    revision.value++;
+  }
+
   static Future<Directory> directory() async {
     final docs = await getApplicationDocumentsDirectory();
     final dir = Directory(path.join(docs.path, 'PiliNara', 'Exports'));
@@ -77,7 +83,18 @@ class _UniversalExportViewState extends State<UniversalExportView>
   @override
   void initState() {
     super.initState();
+    UniversalExportStore.revision.addListener(_onStoreChanged);
     _reload();
+  }
+
+  void _onStoreChanged() {
+    _reload();
+  }
+
+  @override
+  void dispose() {
+    UniversalExportStore.revision.removeListener(_onStoreChanged);
+    super.dispose();
   }
 
   Future<void> _reload() async {
@@ -133,6 +150,7 @@ class _UniversalExportViewState extends State<UniversalExportView>
         }
       } catch (_) {}
     }
+    UniversalExportStore.notifyChanged();
     await _reload();
     SmartDialog.showToast('已删除');
   }
