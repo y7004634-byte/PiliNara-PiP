@@ -75,9 +75,9 @@ s = s[:line_end] + (
 ) + s[line_end:]
 
 # Convert the app loop to enumerated() and publish the phase.
-loop = '                  for row in ordered {'
+loop = 'for row in ordered {'
 pos = s.index(loop)
-s = s[:pos] + '                  for (index, row) in ordered.enumerated() {' + s[pos+len(loop):]
+s = s[:pos] + 'for (index, row) in ordered.enumerated() {' + s[pos+len(loop):]
 task_line = '                      try Task.checkCancellation()\n'
 pos = s.index(task_line, pos)
 insert_at = pos + len(task_line)
