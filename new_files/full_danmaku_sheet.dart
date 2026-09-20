@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' show FontFeature;
 
 import 'package:PiliPlus/grpc/bilibili/community/service/dm/v1.pb.dart'
     show DanmakuElem;
