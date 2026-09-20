@@ -114,6 +114,35 @@ def localize_youmod(app: Path):
         "DISABLES_SNAP_TO_CHAPTER": "停用吸附章節",
         "HIDE_SEARCH_BUTTON_DESC": "隱藏導覽列中的搜尋按鈕。",
         "HIDE_SEARCH_HISTORY_DESC": "使用搜尋列時隱藏先前的搜尋記錄與建議。\n注意：其他 YouTube 用戶端仍可能顯示搜尋記錄。",
+        "GESTURES": "啟用播放器手勢",
+        "GESTURES_DESC": "在播放器畫面使用自訂手勢控制。",
+        "GESTURE_AREA": "手勢觸發範圍",
+        "GESTURE_AREA_DESC": "設定螢幕左右兩側可觸發垂直手勢的寬度。",
+        "LEFT_SIDE_GESTURE": "左側手勢",
+        "RIGHT_SIDE_GESTURE": "右側手勢",
+        "GESTURE_NONE": "無",
+        "GESTURE_BRIGHTNESS": "亮度",
+        "GESTURE_VOLUME": "音量",
+        "GESTURE_SPEED": "播放速度",
+        "FORCE_SEEKBAR": "永遠顯示進度條",
+        "FORCE_SEEKBAR_DESC": "即使播放器控制介面淡出，也持續顯示進度條。",
+        "SHOW_REMAINING_EXTRA": "顯示預估結束時間",
+        "SHOW_REMAINING_EXTRA_DESC": "依目前播放位置與播放速度，顯示影片預計播完的時間。",
+        "USES_24_HOURS_TIME": "使用 24 小時制",
+        "USES_24_HOURS_TIME_DESC": "預估結束時間使用 24 小時制顯示。",
+        "PAUSE_TWO_FINGERS": "雙指點一下播放／暫停",
+        "PAUSE_TWO_FINGERS_DESC": "在播放器畫面用兩根手指點一下，可切換播放與暫停。",
+        "DISABLES_ENGAGE_PANEL": "停用全螢幕互動面板",
+        "DISABLES_ENGAGE_PANEL_DESC": "停用橫向全螢幕的留言、章節或相關內容側邊互動面板。",
+        "CONTROL_CENTER": "控制中心／鎖定畫面",
+        "SKIP_BACKWARD": "快退",
+        "SKIP_BACKWARD_DESC": "將系統媒體控制的上一首按鈕改為快退。",
+        "REWIND_SECONDS": "快退秒數",
+        "SKIP_FORWARD": "快進",
+        "SKIP_FORWARD_DESC": "將系統媒體控制的下一首按鈕改為快進。",
+        "FORWARD_SECONDS": "快進秒數",
+        "DRC_AUDIO_OPTIONS": "自動穩定音量",
+        "DRC_AUDIO_OPTIONS_DESC": "控制 YouTube 的 Stable Volume／動態範圍壓縮（DRC）。",
     }
     for k, v in overrides.items():
         if k in en:
@@ -253,6 +282,38 @@ def localize_yougroupsettings(app: Path):
         p["CFBundleLocalizations"] = locs
         write_bplist(info, p)
 
+def localize_ytuhd(app: Path):
+    bundle = app / "YTUHD.bundle"
+    source = None
+    for cand in ("zh-Hant.lproj", "zh_TW.lproj", "zh_tw.lproj", "zh-TW.lproj"):
+        p = bundle / cand / "Localizable.strings"
+        if p.exists():
+            source = p
+            break
+    if source is None:
+        return
+    out = load_plist(source)
+    out.update({
+        "USE_VP9_AV1": "使用 VP9/AV1 編碼",
+        "USE_VP9_DESC": "啟用支援最高 4K 的 VP9/AV1 編解碼路徑。變更後需重新啟動 YouTube。",
+        "HW_VP9_SUPPORT": "硬體 VP9 解碼支援",
+        "HW_AV1_SUPPORT": "硬體 AV1 解碼支援",
+        "ALL_VP9": "所有解析度使用 VP9",
+        "ALL_VP9_DESC": "所有影片解析度強制使用 VP9。僅建議在硬體支援 VP9 且 YouTube 具備 VP9 entitlement 時使用。",
+        "DISABLE_SERVER_ABR": "停用伺服器 ABR",
+        "DISABLE_SERVER_ABR_DESC": "停用伺服器端自適應位元率（ABR），改走用戶端 ABR。遇到特定影片播放／緩衝異常時可測試此選項。",
+        "DECODE_THREADS": "解碼執行緒",
+        "DECODE_THREADS_DESC": "軟體 VP9/AV1 解碼使用的執行緒數。較高數值可能改善效能，但也可能增加耗電與發熱。",
+        "DECODE_THREADS_DEFAULT_VALUE": "預設值",
+        "SKIP_LOOP_FILTER": "跳過迴圈濾波",
+        "LOOP_FILTER_OPTIMIZATION": "迴圈濾波最佳化",
+        "ROW_THREADING": "列多執行緒處理",
+        "APPLY_GRAIN": "套用底片顆粒",
+        "APPLY_GRAIN_DESC": "AV1 軟體解碼時套用底片顆粒濾鏡；關閉可降低部分影片的 CPU 負載。",
+    })
+    for loc in ("zh-Hant.lproj", "zh-TW.lproj"):
+        write_bplist(bundle / loc / "Localizable.strings", out)
+
 def add_standard_traditional_aliases(app: Path):
     # These bundled tweaks already ship complete Traditional Chinese resources,
     # but several use non-standard folder names such as zh_tw / zh_TW.
@@ -289,6 +350,7 @@ def main():
     localize_youmod(app)
     localize_gonerino(app)
     localize_yougroupsettings(app)
+    localize_ytuhd(app)
     add_standard_traditional_aliases(app)
     print("Traditional Chinese localization patch complete")
 
