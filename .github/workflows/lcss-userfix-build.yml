@@ -486,7 +486,7 @@ jobs:
           grep -Fq 'LCRefreshRunID' work/EmbeddedSideStore/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift
           grep -Fq 'runMarkerMatched' builder/scripts/templates/livecontainer_refresh_scheduler.swift
           grep -Fq '"host_handoff": false' builder/scripts/patch_livecontainer_autorefresh.py
-          grep -Fq 'userfix6: the headless .refresh route updates provisioning profiles' builder/scripts/templates/livecontainer_refresh_scheduler.swift
+          grep -Fq 'defaults.set(false, forKey: hostHandoffKey)' builder/scripts/templates/livecontainer_refresh_scheduler.swift
 
       - name: Apply and verify host integration
         shell: bash
