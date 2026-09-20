@@ -112,16 +112,16 @@ replacement = 'private static func refreshOne(_ row: [String: Any], runID: Strin
 s = s[:pos] + replacement + s[pos+len(needle):]
 
 # Publish live per-operation progress during opPoll.
-needle = '                      let state = reply["state"] as? String ?? "working"\n'
+needle = 'let state = reply["state"] as? String ?? "working"'
 pos = s.index(needle)
-insert_at = pos + len(needle)
-s = s[:insert_at] + (
+line_end = s.index('\n', pos) + 1
+s = s[:line_end] + (
     '                      if let appProgress = reply["progress"] as? Double {\n'
     '                          let clamped = min(max(appProgress, 0.0), 1.0)\n'
     '                          let combined = (Double(index) + clamped) / Double(max(total, 1))\n'
     '                          defaults().set(combined, forKey: "liveContainerAutoRefreshProgress")\n'
     '                      }\n'
-) + s[insert_at:]
+) + s[line_end:]
 
 p.write_text(s, encoding="utf-8")
 
