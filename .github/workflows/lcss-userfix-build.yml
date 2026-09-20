@@ -269,22 +269,11 @@ jobs:
               raise SystemExit("userfix2 refresh closure anchor not found")
           s = s.replace(old, new, 1)
 
-          old = '''                        guard let result = results[app.bundleIdentifier] else {
-                              self.sessions[id]?.terminal = ["state": "failed", "stage": "refreshVerification", "code": "unavailable"]
-                              return
-                          }
-                          if case .failure(let error) = result {
-          '''
-          new = '''                        guard let result = results[app.bundleIdentifier] else {
-                              self.sessions[id]?.terminal = ["state": "failed", "stage": "refreshVerification", "code": "unavailable"]
-                              return
-                          }
-                          self.persistRefreshResult(app: app, result: result)
-                          if case .failure(let error) = result {
-          '''
-          if old not in s:
+          result_anchor = '                        if case .failure(let error) = result {\n'
+          if result_anchor not in s:
               raise SystemExit("userfix2 result anchor not found")
-          s = s.replace(old, new, 1)
+          s = s.replace(result_anchor,
+              '                        self.persistRefreshResult(app: app, result: result)\\n' + result_anchor, 1)
 
           p.write_text(s, encoding="utf-8")
           print("userfix2 builder patch applied")
