@@ -82,10 +82,14 @@ abstract final class UniversalMediaExport {
     var exportDanmaku = false;
 
     _UniversalExportOptions? options;
-    await PageUtils.showVideoBottomSheet(
-      context,
-      maxWidth: 560,
-      child: StatefulBuilder(
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (modalContext) => SizedBox(
+        height: MediaQuery.sizeOf(modalContext).height * 0.72,
+        child: StatefulBuilder(
         builder: (sheetContext, setState) {
           final codecs = codecsFor(selectedQuality);
           if (!codecs.contains(selectedCodec)) {
@@ -228,6 +232,7 @@ abstract final class UniversalMediaExport {
             ),
           );
         },
+      ),
       ),
     );
 

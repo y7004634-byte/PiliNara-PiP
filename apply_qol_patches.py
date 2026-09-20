@@ -435,7 +435,7 @@ replace(
                     showDanmakuPool();
 """,
     """                    Get.back();
-                    Timer(const Duration(milliseconds: 380), () {
+                    Timer(const Duration(milliseconds: 650), () {
                       if (mounted) {
                         showDanmakuPool();
                       }
@@ -455,7 +455,7 @@ insert_before(
                     dense: true,
                     onTap: () {
                       Get.back();
-                      Timer(const Duration(milliseconds: 380), () {
+                      Timer(const Duration(milliseconds: 650), () {
                         if (!mounted) return;
                         UniversalMediaExport.show(
                           context,

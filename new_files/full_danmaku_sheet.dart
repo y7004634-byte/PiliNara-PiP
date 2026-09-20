@@ -127,19 +127,24 @@ abstract final class DanmakuArchiveService {
   }
 }
 
-Future<void>? showFullDanmakuListSheet(
+Future<void> showFullDanmakuListSheet(
   BuildContext context, {
   required int cid,
   required int durationMs,
   required PlPlayerController playerController,
-}) {
-  return PageUtils.showVideoBottomSheet(
-    context,
-    maxWidth: 640,
-    child: _FullDanmakuListSheet(
-      cid: cid,
-      durationMs: durationMs,
-      playerController: playerController,
+}) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheetContext) => SizedBox(
+      height: MediaQuery.sizeOf(sheetContext).height * 0.78,
+      child: _FullDanmakuListSheet(
+        cid: cid,
+        durationMs: durationMs,
+        playerController: playerController,
+      ),
     ),
   );
 }
@@ -338,13 +343,23 @@ class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
                           ),
                         ),
                       ),
+                      tileColor: theme.colorScheme.surface,
                       title: Text(
-                        item.content,
+                        item.content.trim().isEmpty ? '（空白弹幕）' : item.content,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface,
+                          fontSize: 14,
+                        ),
                       ),
                       subtitle: item.likeCount.toInt() > 0
-                          ? Text('赞 ${item.likeCount}')
+                          ? Text(
+                              '赞 ${item.likeCount}',
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            )
                           : null,
                       onLongPress: () => Utils.copyText(item.content),
                       onTap: () {
