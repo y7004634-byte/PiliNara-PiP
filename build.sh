@@ -36,11 +36,13 @@ echo '[2b/7] Apply PiliNara QoL feature set'
 cd "$WORK/PiliNara"
 mkdir -p lib/pages/video/export
 mkdir -p lib/pages/video/widgets
+mkdir -p lib/pages/download
 mkdir -p lib/plugin/pl_player/view
 mkdir -p lib/utils
 cp "$ROOT/new_files/full_danmaku_sheet.dart" lib/pages/video/widgets/full_danmaku_sheet.dart
 cp "$ROOT/new_files/playback_diagnostics_hud.dart" lib/plugin/pl_player/view/playback_diagnostics_hud.dart
 cp "$ROOT/new_files/universal_media_export.dart" lib/pages/video/export/universal_media_export.dart
+cp "$ROOT/new_files/universal_export_view.dart" lib/pages/download/universal_export_view.dart
 cp "$ROOT/new_files/pilinara_native_bridge.dart" lib/utils/pilinara_native_bridge.dart
 python3 "$ROOT/apply_qol_patches.py" "$WORK/PiliNara"
 # Keep the native bridge inside AppDelegate.swift so it is automatically part
@@ -99,7 +101,7 @@ echo '[4/7] Prepare PiliNara build metadata + upstream iOS patches'
 cd "$WORK/PiliNara"
 
 echo '[5/7] Build unsigned iOS IPA'
-flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5865 --dart-define-from-file=pili_release.json --no-pub
+flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5866 --dart-define-from-file=pili_release.json --no-pub
 ln -sf ./build/ios/iphoneos Payload
 find Payload/Runner.app/Frameworks -type d -name '*.framework' -exec codesign --force --sign - --preserve-metadata=identifier,entitlements {} \;
 zip -r9 PiliNara_ios_PiP_raw.ipa Payload/runner.app
