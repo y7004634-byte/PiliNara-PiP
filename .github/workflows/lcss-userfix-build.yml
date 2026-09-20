@@ -405,19 +405,13 @@ jobs:
           #    even when the provisioning profile UUID/expiry and container path are reused.
           rp = Path("work/EmbeddedSideStore/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift")
           rs = rp.read_text(encoding="utf-8")
-          stamp_anchor = '''            additionalValues[Bundle.Info.serverID] = UserDefaults.standard.preferredServerID
-
-                      if let activeCert = CertificateManager.shared.activeCertificate {
-          '''
+          stamp_anchor = '            additionalValues[Bundle.Info.serverID] = UserDefaults.standard.preferredServerID\n'
           stamp_repl = '''            additionalValues[Bundle.Info.serverID] = UserDefaults.standard.preferredServerID
-                      
                       if let runID = UserDefaults(suiteName: "group.com.SideStore.SideStore")?
                           .string(forKey: "liveContainerAutoRefreshExpectedRunID"),
                          UUID(uuidString: runID) != nil {
                           additionalValues["LCRefreshRunID"] = runID
                       }
-
-                      if let activeCert = CertificateManager.shared.activeCertificate {
           '''
           if stamp_anchor not in rs:
               raise SystemExit("userfix5 resign stamp anchor not found")
