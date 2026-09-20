@@ -399,14 +399,63 @@ jobs:
               1
           )
 
+          # 5) Stamp each self-refresh with the current scheduler run ID inside
+          #    the resigned/signed app bundle. On relaunch this is definitive proof
+          #    that the host installed the bundle produced by this exact refresh run,
+          #    even when the provisioning profile UUID/expiry and container path are reused.
+          rp = Path("work/EmbeddedSideStore/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift")
+          rs = rp.read_text(encoding="utf-8")
+          stamp_anchor = '''            additionalValues[Bundle.Info.serverID] = UserDefaults.standard.preferredServerID
+
+                      if let activeCert = CertificateManager.shared.activeCertificate {
+          '''
+          stamp_repl = '''            additionalValues[Bundle.Info.serverID] = UserDefaults.standard.preferredServerID
+                      
+                      if let runID = UserDefaults(suiteName: "group.com.SideStore.SideStore")?
+                          .string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+                         UUID(uuidString: runID) != nil {
+                          additionalValues["LCRefreshRunID"] = runID
+                      }
+
+                      if let activeCert = CertificateManager.shared.activeCertificate {
+          '''
+          if stamp_anchor not in rs:
+              raise SystemExit("userfix5 resign stamp anchor not found")
+          rp.write_text(rs.replace(stamp_anchor, stamp_repl, 1), encoding="utf-8")
+
+          marker_old = '''            let previousUUID = baseline["uuid"] as? String ?? ""
+                      let previousPath = baseline["bundle_path"] as? String ?? ""
+                      let expirationAdvanced = current.expiration > previous
+                      let profileChanged = !previousUUID.isEmpty && current.uuid != previousUUID
+                      let bundleReplaced = !previousPath.isEmpty && bundle.bundleURL.path != previousPath
+                      guard current.expiration > Date(), expirationAdvanced || profileChanged || bundleReplaced else {
+          '''
+          marker_new = '''            let previousUUID = baseline["uuid"] as? String ?? ""
+                      let previousPath = baseline["bundle_path"] as? String ?? ""
+                      let expirationAdvanced = current.expiration > previous
+                      let profileChanged = !previousUUID.isEmpty && current.uuid != previousUUID
+                      let bundleReplaced = !previousPath.isEmpty && bundle.bundleURL.path != previousPath
+                      let runMarkerMatched = (bundle.object(forInfoDictionaryKey: "LCRefreshRunID") as? String) == runID
+                      guard current.expiration > Date(), runMarkerMatched || expirationAdvanced || profileChanged || bundleReplaced else {
+          '''
+          if marker_old not in s:
+              raise SystemExit("userfix5 marker verification anchor not found")
+          s = s.replace(marker_old, marker_new, 1)
+          s = s.replace(
+              'print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED expiration_advanced=\\(expirationAdvanced) profile_uuid_changed=\\(profileChanged) bundle_path_changed=\\(bundleReplaced)")',
+              'print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED run_marker=\\(runMarkerMatched) expiration_advanced=\\(expirationAdvanced) profile_uuid_changed=\\(profileChanged) bundle_path_changed=\\(bundleReplaced)")',
+              1
+          )
+
           p.write_text(s, encoding="utf-8")
 
-          print("userfix4 builder patch applied")
+          print("userfix5 builder patch applied")
           PY
 
           grep -Fq 'v3 userfix3: use the proven headless service' builder/scripts/patch_livecontainer_autorefresh.py
           grep -Fq 'prepareHostHandoffIfNeeded' builder/scripts/templates/v3_headless_runtime.swift
-          grep -Fq 'bundle_path' builder/scripts/templates/livecontainer_refresh_scheduler.swift
+          grep -Fq 'LCRefreshRunID' work/EmbeddedSideStore/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift
+          grep -Fq 'runMarkerMatched' builder/scripts/templates/livecontainer_refresh_scheduler.swift
 
       - name: Apply and verify host integration
         shell: bash
