@@ -34,8 +34,8 @@ def patch_volume_boost(root: Path):
         '@"Haptic Feedback"': '@"觸覺回饋"',
         '@"Vibrate when the gesture is activated."': '@"手勢成功觸發時震動。"',
         '@"ABOUT"': '@"關於"',
-        '@"Simple. Louder. Better YouTube."': '@"簡單、更大聲、更好用的 YouTube。"',
         '@"Simple. Louder. Better YouTube.\\n0%–2000% Volume Boost"': '@"簡單、更大聲、更好用的 YouTube。\\n音量增益範圍：0%–2000%"',
+        '@"Simple. Louder. Better YouTube."': '@"簡單、更大聲、更好用的 YouTube。"',
         '@"Done"': '@"完成"',
     }
     replace_exact(tweak, replacements)
