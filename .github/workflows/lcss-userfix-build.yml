@@ -33,6 +33,12 @@ jobs:
           git clone --filter=blob:none https://github.com/NRG-Wardog/sidestore-auto-refresh.git builder
           git -C builder checkout --detach 6f0a144936c789bd7557d93ecf752888fddbb256
 
+      - name: Checkout userfix patcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch lcss-userfix-build https://github.com/y7004634-byte/PiliNara-PiP.git userfix-repo
+
       - name: Checkout pinned LiveContainer sources
         shell: bash
         run: |
@@ -487,6 +493,16 @@ jobs:
           grep -Fq 'runMarkerMatched' builder/scripts/templates/livecontainer_refresh_scheduler.swift
           grep -Fq '"host_handoff": false' builder/scripts/patch_livecontainer_autorefresh.py
           grep -Fq 'defaults.set(false, forKey: hostHandoffKey)' builder/scripts/templates/livecontainer_refresh_scheduler.swift
+
+      - name: Apply userfix7 UI, localization, and shared IPA fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 userfix-repo/tools/lcss_userfix7.py
+          grep -Fq 'liveContainerAutoRefreshProgress' builder/scripts/patch_livecontainer_autorefresh.py
+          grep -Fq 'security-scoped' builder/scripts/templates/v3_headless_runtime.swift
+          grep -Fq '安裝／側載 IPA' builder/scripts/templates/v3_unified_shell.swift
+          grep -Fq '排程刷新' builder/scripts/templates/livecontainer_refresh_settings.swift
 
       - name: Apply and verify host integration
         shell: bash
