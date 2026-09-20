@@ -94,15 +94,16 @@ s = s[:line_end] + (
     '                                forKey: "liveContainerAutoRefreshProgress")\n'
 ) + s[line_end:]
 
-# Add completion state immediately after the loop, before the final cancellation check.
-needle = '                  try Task.checkCancellation()\n              }\n\n              private static func persistManifest'
-pos = s.index(needle)
-replacement = (
+# Add completion state before the final cancellation check in refreshAllApps.
+manifest_pos = s.index('private static func persistManifest')
+pos = s.rfind('try Task.checkCancellation()', 0, manifest_pos)
+if pos < 0:
+    raise SystemExit("userfix7 final cancellation anchor not found")
+line_start = s.rfind('\n', 0, pos) + 1
+s = s[:line_start] + (
     '                  store.set(1.0, forKey: "liveContainerAutoRefreshProgress")\n'
     '                  store.set("刷新完成", forKey: "liveContainerAutoRefreshPhase")\n'
-    + needle
-)
-s = s[:pos] + replacement + s[pos+len(needle):]
+) + s[line_start:]
 
 # Add index/total to refreshOne.
 needle = 'private static func refreshOne(_ row: [String: Any], runID: String) async throws {'
