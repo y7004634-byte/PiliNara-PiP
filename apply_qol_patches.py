@@ -40,6 +40,18 @@ def replace_between(path, start, end, replacement, label):
 app_delegate = pili / "ios/Runner/AppDelegate.swift"
 replace(
     app_delegate,
+    """import Flutter
+import UIKit
+""",
+    """import AVFoundation
+import Flutter
+import Foundation
+import UIKit
+""",
+    "add native bridge framework imports",
+)
+replace(
+    app_delegate,
     """  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
   }
