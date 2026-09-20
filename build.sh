@@ -42,8 +42,10 @@ cp "$ROOT/new_files/full_danmaku_sheet.dart" lib/pages/video/widgets/full_danmak
 cp "$ROOT/new_files/playback_diagnostics_hud.dart" lib/plugin/pl_player/view/playback_diagnostics_hud.dart
 cp "$ROOT/new_files/universal_media_export.dart" lib/pages/video/export/universal_media_export.dart
 cp "$ROOT/new_files/pilinara_native_bridge.dart" lib/utils/pilinara_native_bridge.dart
-cp "$ROOT/new_files/PiliNaraNativeBridge.swift" ios/Runner/PiliNaraNativeBridge.swift
 python3 "$ROOT/apply_qol_patches.py" "$WORK/PiliNara"
+# Keep the native bridge inside AppDelegate.swift so it is automatically part
+# of the existing Runner target without mutating Xcode project membership.
+tail -n +5 "$ROOT/new_files/PiliNaraNativeBridge.swift" >> ios/Runner/AppDelegate.swift
 
 echo '[3/7] Configure local media-kit dependency overrides'
 cd "$WORK/PiliNara"
@@ -97,7 +99,7 @@ echo '[4/7] Prepare PiliNara build metadata + upstream iOS patches'
 cd "$WORK/PiliNara"
 
 echo '[5/7] Build unsigned iOS IPA'
-flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5864 --dart-define-from-file=pili_release.json --no-pub
+flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5865 --dart-define-from-file=pili_release.json --no-pub
 ln -sf ./build/ios/iphoneos Payload
 find Payload/Runner.app/Frameworks -type d -name '*.framework' -exec codesign --force --sign - --preserve-metadata=identifier,entitlements {} \;
 zip -r9 PiliNara_ios_PiP_raw.ipa Payload/runner.app
