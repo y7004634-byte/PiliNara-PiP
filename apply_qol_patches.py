@@ -631,7 +631,10 @@ insert_before(
         if (isFullScreen &&
             widget.introController?.isShowOnlineTotal == true)
           Positioned(
-            left: 10,
+            left: math.max(
+              30.0,
+              MediaQuery.viewPaddingOf(context).left * 0.55,
+            ),
             bottom: 10,
             child: IgnorePointer(
               child: Obx(
