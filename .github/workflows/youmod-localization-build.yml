@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brew install opencc make ldid
+          brew install opencc make ldid dpkg
           pipx install https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
 
       - name: Download exact YouMod 21.37.4 release
@@ -100,7 +100,7 @@ jobs:
           test -f "$ABC_DEB"
           printf 'VolumeBoost=%s\nYouPiP=%s\nYTABConfig=%s\n' "$VOL_DEB" "$PIP_DEB" "$ABC_DEB" | tee custom-debs.txt
 
-      - name: Inject customized tweaks into base IPA
+      - name: Replace tweak binaries without re-injecting load commands
         shell: bash
         run: |
           set -euo pipefail
@@ -108,25 +108,49 @@ jobs:
           PIP_DEB="$(find YouPiP/packages -type f -name '*.deb' | head -n 1)"
           ABC_DEB="$(find YTABConfig/packages -type f -name '*.deb' | head -n 1)"
 
-          # cyan's -e path rebuilds app extensions, so explicitly carry forward
-          # the exact Safari extension already present in the official YouMod IPA.
-          rm -rf base-extract OpenYouTubeSafariExtension.appex
-          mkdir base-extract
-          ditto -x -k base.ipa base-extract
-          APPEX="$(find base-extract/Payload -type d -name 'OpenYouTubeSafariExtension.appex' | head -n 1)"
-          test -n "$APPEX"
-          ditto "$APPEX" OpenYouTubeSafariExtension.appex
+          rm -rf work debx
+          mkdir -p work debx/vol debx/pip debx/abc
+          ditto -x -k base.ipa work
+          APP="$(find work/Payload -maxdepth 1 -type d -name '*.app' | head -n 1)"
+          test -n "$APP"
 
-          cyan -i base.ipa -o source-patched.ipa -uwef             OpenYouTubeSafariExtension.appex "$VOL_DEB" "$PIP_DEB" "$ABC_DEB"
-          test -s source-patched.ipa
+          shasum -a 256 "$APP/YouTube" | tee main-executable-before.txt
+
+          dpkg-deb -x "$VOL_DEB" debx/vol
+          dpkg-deb -x "$PIP_DEB" debx/pip
+          dpkg-deb -x "$ABC_DEB" debx/abc
+
+          VOL_DYLIB="$(find debx/vol -type f -name 'VolumeBoostYT.dylib' | head -n 1)"
+          PIP_DYLIB="$(find debx/pip -type f -name 'YouPiP.dylib' | head -n 1)"
+          ABC_DYLIB="$(find debx/abc -type f -name 'YTABConfig.dylib' | head -n 1)"
+          test -f "$VOL_DYLIB"
+          test -f "$PIP_DYLIB"
+          test -f "$ABC_DYLIB"
+
+          cp "$VOL_DYLIB" "$APP/Frameworks/VolumeBoostYT.dylib"
+          cp "$PIP_DYLIB" "$APP/Frameworks/YouPiP.dylib"
+          cp "$ABC_DYLIB" "$APP/Frameworks/YTABConfig.dylib"
+          chmod 755 "$APP/Frameworks/VolumeBoostYT.dylib" "$APP/Frameworks/YouPiP.dylib" "$APP/Frameworks/YTABConfig.dylib"
+
+          # Critical regression guard: the base IPA already has these LC_LOAD_WEAK_DYLIB
+          # commands. Re-injecting the same tweaks adds duplicate load commands and can
+          # crash the app at launch. The main executable must remain byte-identical.
+          shasum -a 256 "$APP/YouTube" | tee main-executable-after.txt
+          cmp main-executable-before.txt main-executable-after.txt
+
+          otool -L "$APP/YouTube" > loaded-dylibs.txt
+          for name in VolumeBoostYT YouPiP YTABConfig; do
+            count="$(grep -c "@rpath/$name.dylib" loaded-dylibs.txt)"
+            echo "$name load-command-count=$count"
+            test "$count" -eq 1
+          done
+
+          test -d "$APP/PlugIns/OpenYouTubeSafariExtension.appex"
 
       - name: Apply Traditional Chinese resource patch
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf work
-          mkdir work
-          ditto -x -k source-patched.ipa work
           APP="$(find work/Payload -maxdepth 1 -type d -name '*.app' | head -n 1)"
           test -n "$APP"
 
