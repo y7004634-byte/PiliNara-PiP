@@ -219,16 +219,33 @@ class _UniversalExportViewState extends State<UniversalExportView>
   }
 
   Future<void> _delete(File file) async {
-    final files = UniversalExportStore.companionsFor(file);
-    for (final item in files) {
+    final targets = UniversalExportStore.companionsFor(file);
+    final failures = <String>[];
+
+    for (final item in targets) {
       try {
-        if (item.existsSync()) {
+        if (await item.exists()) {
           await item.delete();
         }
-      } catch (_) {}
+        if (await item.exists()) {
+          failures.add('${path.basename(item.path)}：刪除後檔案仍存在');
+        }
+      } catch (e) {
+        failures.add('${path.basename(item.path)}：$e');
+      }
     }
-    UniversalExportStore.notifyChanged();
+
     await _reload();
+
+    if (failures.isNotEmpty) {
+      SmartDialog.showToast(
+        '刪除失敗：${failures.join('；')}',
+        displayTime: const Duration(seconds: 5),
+      );
+      return;
+    }
+
+    UniversalExportStore.notifyChanged();
     SmartDialog.showToast('已刪除');
   }
 
@@ -366,7 +383,11 @@ class _UniversalExportViewState extends State<UniversalExportView>
                 tooltip: '分享 / 儲存到檔案',
                 padding: EdgeInsets.zero,
                 onPressed: () => _share(file),
-                icon: const Icon(Icons.ios_share_outlined, size: 20),
+                icon: Icon(
+                  Icons.ios_share_outlined,
+                  size: 20,
+                  color: scheme.primary,
+                ),
               ),
             ),
             SizedBox(
@@ -376,7 +397,11 @@ class _UniversalExportViewState extends State<UniversalExportView>
                 tooltip: '刪除',
                 padding: EdgeInsets.zero,
                 onPressed: () => _delete(file),
-                icon: const Icon(Icons.delete_outline, size: 20),
+                icon: Icon(
+                  Icons.delete_outline,
+                  size: 20,
+                  color: scheme.error,
+                ),
               ),
             ),
             const SizedBox(width: 6),

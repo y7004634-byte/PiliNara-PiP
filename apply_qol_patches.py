@@ -833,8 +833,7 @@ insert_before(
             icon: const Icon(FontAwesomeIcons.shareFromSquare),
             onTap: () => introController.actionShareVideo(context),
 """,
-    """          if (!videoDetailCtr.isFileSource &&
-              videoDetailCtr.data.dash != null)
+    """          if (!isLoading && !videoDetailCtr.isFileSource)
             ActionItem(
               icon: const Icon(Icons.download_outlined),
               onTap: () => UniversalMediaExport.show(
@@ -867,8 +866,7 @@ insert_before(
             icon: const Icon(FontAwesomeIcons.shareFromSquare),
             onTap: () => introController.actionShareVideo(context),
 """,
-    """          if (!videoDetailCtr.isFileSource &&
-              videoDetailCtr.data.dash != null)
+    """          if (!videoDetailCtr.isFileSource)
             ActionItem(
               icon: const Icon(Icons.download_outlined),
               onTap: () => UniversalMediaExport.show(

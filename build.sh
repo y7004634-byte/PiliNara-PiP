@@ -102,7 +102,7 @@ cd "$WORK/PiliNara"
 
 echo '[5/7] Build unsigned iOS IPA'
 set +e
-flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5878 --dart-define-from-file=pili_release.json --no-pub
+flutter build ios --release --no-codesign --build-name=2.1.3 --build-number=5879 --dart-define-from-file=pili_release.json --no-pub
 flutter_status=$?
 set -e
 
@@ -140,4 +140,5 @@ shasum -a 256 "$GITHUB_WORKSPACE/PiliNara_ios_2.1.3_PiP_zh-TW.ipa"
 
 
 
-# trigger: 5878-sort-quick-download-fixed-file-rows
+
+# trigger: 5879-safe-quick-download-and-delete
