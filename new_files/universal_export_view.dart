@@ -118,7 +118,9 @@ abstract final class UniversalExportQueue {
           ..progress = 1
           ..stage = '已完成';
         UniversalExportStore.notifyChanged();
-        _emit();
+        tasks.value = tasks.value
+            .where((item) => item.id != task.id)
+            .toList(growable: false);
         SmartDialog.showToast(
           '$label 下載完成，已保存到「通用檔案」',
           displayTime: const Duration(seconds: 4),
@@ -303,68 +305,82 @@ class _UniversalExportViewState extends State<UniversalExportView>
     );
     if (sidecars > 0) subtitle.write(' · 附加檔 $sidecars');
 
-    return Material(
-      color: scheme.surface,
-      child: InkWell(
-        onTap: () => _share(file),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: scheme.outlineVariant),
-            ),
+    return SizedBox(
+      height: 78,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border: Border(
+            bottom: BorderSide(color: scheme.outlineVariant),
           ),
-          child: Row(
-            children: [
-              Icon(
+        ),
+        child: Row(
+          children: [
+            const SizedBox(width: 14),
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: Icon(
                 ext == '.mp4'
                     ? Icons.movie_outlined
                     : Icons.audio_file_outlined,
                 color: scheme.primary,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      path.basename(file.path),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: scheme.onSurface),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle.toString(),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _share(file),
+                child: SizedBox(
+                  height: 70,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        path.basename(file.path),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: scheme.onSurface),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle.toString(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'share') {
-                    _share(file);
-                  } else if (value == 'delete') {
-                    _delete(file);
-                  }
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(
-                    value: 'share',
-                    child: Text('分享 / 儲存到檔案'),
-                  ),
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Text('刪除'),
-                  ),
-                ],
+            ),
+            SizedBox(
+              width: 42,
+              height: 42,
+              child: IconButton(
+                tooltip: '分享 / 儲存到檔案',
+                padding: EdgeInsets.zero,
+                onPressed: () => _share(file),
+                icon: const Icon(Icons.ios_share_outlined, size: 20),
               ),
-            ],
-          ),
+            ),
+            SizedBox(
+              width: 42,
+              height: 42,
+              child: IconButton(
+                tooltip: '刪除',
+                padding: EdgeInsets.zero,
+                onPressed: () => _delete(file),
+                icon: const Icon(Icons.delete_outline, size: 20),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
         ),
       ),
     );

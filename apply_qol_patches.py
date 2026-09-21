@@ -815,4 +815,75 @@ replace(
     "offline cache universal tab content",
 )
 
+
+
+# One-tap MP4/M4A shortcut in the normal like/favorite/share action row.
+ugc_view = pili / "lib/pages/video/introduction/ugc/view.dart"
+replace(
+    ugc_view,
+    "import 'package:PiliPlus/pages/video/controller.dart';\n",
+    """import 'package:PiliPlus/pages/video/controller.dart';
+import 'package:PiliPlus/pages/video/export/universal_media_export.dart';
+""",
+    "UGC quick export import",
+)
+insert_before(
+    ugc_view,
+    """          ActionItem(
+            icon: const Icon(FontAwesomeIcons.shareFromSquare),
+            onTap: () => introController.actionShareVideo(context),
+""",
+    """          if (!videoDetailCtr.isFileSource &&
+              videoDetailCtr.data.dash != null)
+            ActionItem(
+              icon: const Icon(Icons.download_outlined),
+              onTap: () => UniversalMediaExport.show(
+                context,
+                controller: videoDetailCtr,
+                title:
+                    introController.videoDetail.value.title ??
+                    videoDetailCtr.bvid,
+              ),
+              selectStatus: false,
+              semanticsLabel: '下載',
+              text: '下載',
+            ),
+""",
+    "UGC quick MP4/M4A action",
+)
+
+pgc_view = pili / "lib/pages/video/introduction/pgc/view.dart"
+replace(
+    pgc_view,
+    "import 'package:PiliPlus/pages/video/controller.dart';\n",
+    """import 'package:PiliPlus/pages/video/controller.dart';
+import 'package:PiliPlus/pages/video/export/universal_media_export.dart';
+""",
+    "PGC quick export import",
+)
+insert_before(
+    pgc_view,
+    """          ActionItem(
+            icon: const Icon(FontAwesomeIcons.shareFromSquare),
+            onTap: () => introController.actionShareVideo(context),
+""",
+    """          if (!videoDetailCtr.isFileSource &&
+              videoDetailCtr.data.dash != null)
+            ActionItem(
+              icon: const Icon(Icons.download_outlined),
+              onTap: () => UniversalMediaExport.show(
+                context,
+                controller: videoDetailCtr,
+                title:
+                    introController.pgcItem.title ??
+                    videoDetailCtr.bvid,
+              ),
+              selectStatus: false,
+              semanticsLabel: '下載',
+              text: '下載',
+            ),
+""",
+    "PGC quick MP4/M4A action",
+)
+
 print("ALL QOL PATCHES APPLIED")

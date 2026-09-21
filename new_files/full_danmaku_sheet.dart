@@ -142,6 +142,8 @@ Future<void> showFullDanmakuListSheet(
   );
 }
 
+enum _DanmakuSort { videoTime, latest }
+
 class _FullDanmakuListSheet extends StatefulWidget {
   const _FullDanmakuListSheet({
     required this.cid,
@@ -159,7 +161,7 @@ class _FullDanmakuListSheet extends StatefulWidget {
 
 class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
   List<DanmakuElem> _items = const [];
-  String _query = '';
+  _DanmakuSort _sort = _DanmakuSort.videoTime;
   int _loaded = 0;
   int _total = 0;
   int _generation = 0;
@@ -167,11 +169,22 @@ class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
   Object? _error;
 
   List<DanmakuElem> get _visible {
-    final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return _items;
-    return _items
-        .where((e) => e.content.toLowerCase().contains(q))
-        .toList(growable: false);
+    final list = List<DanmakuElem>.of(_items);
+    switch (_sort) {
+      case _DanmakuSort.videoTime:
+        list.sort((a, b) {
+          final byProgress = a.progress.compareTo(b.progress);
+          if (byProgress != 0) return byProgress;
+          return a.id.compareTo(b.id);
+        });
+      case _DanmakuSort.latest:
+        list.sort((a, b) {
+          final byCreated = b.ctime.toInt().compareTo(a.ctime.toInt());
+          if (byCreated != 0) return byCreated;
+          return b.id.compareTo(a.id);
+        });
+    }
+    return list;
   }
 
   @override
@@ -304,6 +317,52 @@ class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
     );
   }
 
+  Widget _sortButton(
+    BuildContext context, {
+    required _DanmakuSort value,
+    required String label,
+    required IconData icon,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = _sort == value;
+    return Expanded(
+      child: Material(
+        color: selected ? scheme.secondaryContainer : scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(9),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(9),
+          onTap: () => setState(() => _sort = value),
+          child: SizedBox(
+            height: 40,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 16,
+                  color: selected
+                      ? scheme.onSecondaryContainer
+                      : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    color: selected
+                        ? scheme.onSecondaryContainer
+                        : scheme.onSurface,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -355,19 +414,22 @@ class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-            child: SizedBox(
-              height: 46,
-              child: TextField(
-                maxLines: 1,
-                textAlignVertical: TextAlignVertical.center,
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  hintText: '搜尋彈幕',
-                  isDense: true,
-                  border: OutlineInputBorder(),
+            child: Row(
+              children: [
+                _sortButton(
+                  context,
+                  value: _DanmakuSort.videoTime,
+                  label: '影片時間',
+                  icon: Icons.schedule,
                 ),
-                onChanged: (value) => setState(() => _query = value),
-              ),
+                const SizedBox(width: 8),
+                _sortButton(
+                  context,
+                  value: _DanmakuSort.latest,
+                  label: '最新',
+                  icon: Icons.new_releases_outlined,
+                ),
+              ],
             ),
           ),
           if (_error != null)
