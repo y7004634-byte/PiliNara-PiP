@@ -7,8 +7,8 @@ import 'package:PiliPlus/grpc/bilibili/community/service/dm/v1.pb.dart'
 import 'package:PiliPlus/grpc/dm.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
-import 'package:PiliPlus/utils/utils.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
+import 'package:PiliPlus/utils/utils.dart';
 import 'package:flutter/material.dart';
 
 abstract final class DanmakuArchiveService {
@@ -23,7 +23,6 @@ abstract final class DanmakuArchiveService {
   }) async {
     final total = math.max(1, (durationMs / segmentLengthMs).ceil());
     final byId = <String, DanmakuElem>{};
-    var loaded = 0;
 
     Future<List<DanmakuElem>> fetchSegment(int zeroBasedIndex) async {
       Object? lastError;
@@ -48,7 +47,7 @@ abstract final class DanmakuArchiveService {
         }
       }
       throw StateError(
-        '第 ${zeroBasedIndex + 1} 个弹幕分片载入失败：$lastError',
+        '第 ${zeroBasedIndex + 1} 個彈幕分片載入失敗：$lastError',
       );
     }
 
@@ -70,14 +69,13 @@ abstract final class DanmakuArchiveService {
         }
       }
 
-      loaded = end;
       final snapshot = byId.values.toList(growable: false)
         ..sort((a, b) {
           final byProgress = a.progress.compareTo(b.progress);
           if (byProgress != 0) return byProgress;
           return a.id.compareTo(b.id);
         });
-      onProgress?.call(snapshot, loaded, total);
+      onProgress?.call(snapshot, end, total);
     }
 
     final result = byId.values.toList(growable: false)
@@ -190,18 +188,16 @@ class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
 
   Future<void> _load() async {
     final generation = ++_generation;
-    if (mounted) {
-      setState(() {
-        _loading = true;
-        _error = null;
-        _items = const [];
-        _loaded = 0;
-        _total = math.max(
-          1,
-          (widget.durationMs / DanmakuArchiveService.segmentLengthMs).ceil(),
-        );
-      });
-    }
+    setState(() {
+      _loading = true;
+      _error = null;
+      _items = const [];
+      _loaded = 0;
+      _total = math.max(
+        1,
+        (widget.durationMs / DanmakuArchiveService.segmentLengthMs).ceil(),
+      );
+    });
 
     try {
       final items = await DanmakuArchiveService.fetchAll(
@@ -245,129 +241,168 @@ class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
         '${s.toString().padLeft(2, '0')}';
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final visible = _visible;
-    final status = _loading
-        ? '已载入 $_loaded/$_total 分片 · ${_items.length} 条'
-        : '${_items.length} 条';
+  Widget _row(BuildContext context, DanmakuElem item) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = item.content.trim().isEmpty ? '（空白彈幕）' : item.content;
 
     return Material(
-      color: theme.colorScheme.surface,
-      child: Column(
-        children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+      color: scheme.surface,
+      child: InkWell(
+        onLongPress: () => Utils.copyText(item.content),
+        onTap: () {
+          Navigator.of(context).pop();
+          widget.playerController.seekTo(
+            Duration(milliseconds: item.progress),
+            isSeek: false,
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: scheme.outlineVariant),
+            ),
+          ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '完整弹幕列表',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+              SizedBox(
+                width: 58,
+                child: Text(
+                  _formatTime(item.progress),
+                  style: TextStyle(
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                    fontSize: 12,
+                    color: scheme.primary,
+                  ),
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  status,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  text,
                   style: TextStyle(
-                    fontSize: 12,
-                    color: theme.colorScheme.outline,
+                    color: scheme.onSurface,
+                    fontSize: 14,
                   ),
                 ),
               ),
-              IconButton(
-                tooltip: '重新载入',
-                onPressed: _loading ? null : _load,
-                icon: const Icon(Icons.refresh),
-              ),
+              if (item.likeCount.toInt() > 0) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '讚 ${item.likeCount}',
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
-        if (_loading)
-          LinearProgressIndicator(
-            value: _total <= 0 ? null : _loaded / _total,
-            minHeight: 2,
-          ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-          child: TextField(
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: '搜索弹幕',
-              isDense: true,
-              border: OutlineInputBorder(),
-            ),
-            onChanged: (value) => setState(() => _query = value),
-          ),
-        ),
-        if (_error != null)
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final visible = _visible;
+    final status = _loading
+        ? '已載入 $_loaded/$_total 分片 · ${_items.length} 條'
+        : '${_items.length} 條';
+
+    return Material(
+      color: scheme.surface,
+      child: Column(
+        children: [
           Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              '载入失败：$_error',
-              style: TextStyle(color: theme.colorScheme.error),
+            padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+            child: Row(
+              children: [
+                Text(
+                  '完整彈幕列表',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    status,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '重新載入',
+                  onPressed: _loading ? null : _load,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
             ),
           ),
-        Expanded(
-          child: visible.isEmpty
-              ? Center(
-                  child: Text(
-                    _loading ? '正在取得整部影片弹幕…' : '没有符合的弹幕',
-                    style: TextStyle(color: theme.colorScheme.outline),
-                  ),
-                )
-              : ListView.builder(
-                  itemCount: visible.length,
-                  itemBuilder: (context, index) {
-                    final item = visible[index];
-                    return ListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
+          if (_loading)
+            LinearProgressIndicator(
+              value: _total <= 0 ? null : _loaded / _total,
+              minHeight: 2,
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+            child: SizedBox(
+              height: 46,
+              child: TextField(
+                maxLines: 1,
+                textAlignVertical: TextAlignVertical.center,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: '搜尋彈幕',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (value) => setState(() => _query = value),
+              ),
+            ),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '載入失敗：$_error',
+                style: TextStyle(color: scheme.error),
+              ),
+            ),
+          Expanded(
+            child: ColoredBox(
+              color: scheme.surface,
+              child: visible.isEmpty
+                  ? Center(
+                      child: Text(
+                        _loading ? '正在取得整部影片彈幕…' : '沒有符合的彈幕',
+                        style: TextStyle(color: scheme.onSurfaceVariant),
                       ),
-                      leading: SizedBox(
-                        width: 58,
-                        child: Text(
-                          _formatTime(item.progress),
-                          style: TextStyle(
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                            fontSize: 12,
-                            color: theme.colorScheme.primary,
+                    )
+                  : CustomScrollView(
+                      slivers: [
+                        SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) => _row(context, visible[index]),
+                            childCount: visible.length,
                           ),
                         ),
-                      ),
-                      tileColor: theme.colorScheme.surface,
-                      title: Text(
-                        item.content.trim().isEmpty ? '（空白弹幕）' : item.content,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurface,
-                          fontSize: 14,
+                        const SliverToBoxAdapter(
+                          child: SizedBox(height: 24),
                         ),
-                      ),
-                      subtitle: item.likeCount.toInt() > 0
-                          ? Text(
-                              '赞 ${item.likeCount}',
-                              style: TextStyle(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            )
-                          : null,
-                      onLongPress: () => Utils.copyText(item.content),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        widget.playerController.seekTo(
-                          Duration(milliseconds: item.progress),
-                          isSeek: false,
-                        );
-                      },
-                    );
-                  },
-                ),
-        ),
+                      ],
+                    ),
+            ),
+          ),
         ],
       ),
     );

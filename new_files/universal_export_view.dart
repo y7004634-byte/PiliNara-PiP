@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:PiliPlus/utils/share_utils.dart';
@@ -64,6 +65,80 @@ abstract final class UniversalExportStore {
   }
 }
 
+enum UniversalExportTaskStatus { running, completed, failed }
+
+class UniversalExportTask {
+  UniversalExportTask({
+    required this.id,
+    required this.label,
+    this.status = UniversalExportTaskStatus.running,
+    this.progress,
+    this.stage = '等待中',
+    this.error,
+  });
+
+  final String id;
+  final String label;
+  UniversalExportTaskStatus status;
+  double? progress;
+  String stage;
+  String? error;
+}
+
+abstract final class UniversalExportQueue {
+  static final ValueNotifier<List<UniversalExportTask>> tasks =
+      ValueNotifier<List<UniversalExportTask>>(<UniversalExportTask>[]);
+
+  static void _emit() {
+    tasks.value = List<UniversalExportTask>.unmodifiable(tasks.value);
+  }
+
+  static void enqueue({
+    required String label,
+    required Future<void> Function(
+      void Function(double? progress, String stage) report,
+    ) runner,
+  }) {
+    final task = UniversalExportTask(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      label: label,
+    );
+    tasks.value = <UniversalExportTask>[task, ...tasks.value];
+
+    unawaited(() async {
+      try {
+        await runner((progress, stage) {
+          task
+            ..progress = progress
+            ..stage = stage;
+          _emit();
+        });
+        task
+          ..status = UniversalExportTaskStatus.completed
+          ..progress = 1
+          ..stage = '已完成';
+        UniversalExportStore.notifyChanged();
+        _emit();
+        SmartDialog.showToast(
+          '$label 下載完成，已保存到「通用檔案」',
+          displayTime: const Duration(seconds: 4),
+        );
+      } catch (e) {
+        task
+          ..status = UniversalExportTaskStatus.failed
+          ..progress = null
+          ..stage = '失敗'
+          ..error = e.toString();
+        _emit();
+        SmartDialog.showToast(
+          '$label 下載/封裝失敗：$e',
+          displayTime: const Duration(seconds: 5),
+        );
+      }
+    }());
+  }
+}
+
 class UniversalExportView extends StatefulWidget {
   const UniversalExportView({super.key});
 
@@ -84,11 +159,11 @@ class _UniversalExportViewState extends State<UniversalExportView>
   void initState() {
     super.initState();
     UniversalExportStore.revision.addListener(_onStoreChanged);
-    _reload();
+    unawaited(_reload());
   }
 
   void _onStoreChanged() {
-    _reload();
+    unawaited(_reload());
   }
 
   @override
@@ -152,95 +227,238 @@ class _UniversalExportViewState extends State<UniversalExportView>
     }
     UniversalExportStore.notifyChanged();
     await _reload();
-    SmartDialog.showToast('已删除');
+    SmartDialog.showToast('已刪除');
+  }
+
+  Widget _taskCard(BuildContext context, UniversalExportTask task) {
+    final scheme = Theme.of(context).colorScheme;
+    final failed = task.status == UniversalExportTaskStatus.failed;
+    final completed = task.status == UniversalExportTaskStatus.completed;
+    final icon = failed
+        ? Icons.error_outline
+        : completed
+        ? Icons.check_circle_outline
+        : Icons.downloading_outlined;
+    final iconColor = failed
+        ? scheme.error
+        : completed
+        ? scheme.primary
+        : scheme.secondary;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: iconColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  task.label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: scheme.onSurface),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  failed && task.error != null
+                      ? '${task.stage}：${task.error}'
+                      : task.stage,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: failed ? scheme.error : scheme.onSurfaceVariant,
+                  ),
+                ),
+                if (!failed && !completed) ...[
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(value: task.progress),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fileRow(BuildContext context, File file) {
+    final scheme = Theme.of(context).colorScheme;
+    final ext = path.extension(file.path).toLowerCase();
+    final sidecars = UniversalExportStore.companionsFor(file).length - 1;
+    final modified = file.lastModifiedSync();
+    final subtitle = StringBuffer(
+      '${_sizeLabel(file.lengthSync())} · '
+      '${DateFormat('yyyy/MM/dd HH:mm').format(modified)}',
+    );
+    if (sidecars > 0) subtitle.write(' · 附加檔 $sidecars');
+
+    return Material(
+      color: scheme.surface,
+      child: InkWell(
+        onTap: () => _share(file),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: scheme.outlineVariant),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                ext == '.mp4'
+                    ? Icons.movie_outlined
+                    : Icons.audio_file_outlined,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      path.basename(file.path),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: scheme.onSurface),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle.toString(),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                onSelected: (value) {
+                  if (value == 'share') {
+                    _share(file);
+                  } else if (value == 'delete') {
+                    _delete(file);
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'share',
+                    child: Text('分享 / 儲存到檔案'),
+                  ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Text('刪除'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_error != null) {
-      return Center(
-        child: FilledButton.icon(
-          onPressed: _reload,
-          icon: const Icon(Icons.refresh),
-          label: Text('读取失败：$_error'),
-        ),
-      );
-    }
-    if (_files.isEmpty) {
-      return RefreshIndicator(
-        onRefresh: _reload,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 180),
-            Icon(Icons.video_file_outlined, size: 52),
-            SizedBox(height: 12),
-            Center(
-              child: Text(
-                '还没有通用影片档案\n从影片选单使用「下载 MP4 / M4A」后会出现在这里',
-                textAlign: TextAlign.center,
+    final scheme = Theme.of(context).colorScheme;
+
+    return ColoredBox(
+      color: scheme.surface,
+      child: ValueListenableBuilder<List<UniversalExportTask>>(
+        valueListenable: UniversalExportQueue.tasks,
+        builder: (context, tasks, _) {
+          return CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(
+                child: Row(
+                  children: [
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Text(
+                        '通用檔案 ${_files.length} 個',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '重新整理',
+                      onPressed: _reload,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
               ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _reload,
-      child: ListView.separated(
-        padding: const EdgeInsets.only(top: 6, bottom: 24),
-        itemCount: _files.length,
-        separatorBuilder: (_, _) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final file = _files[index];
-          final ext = path.extension(file.path).toLowerCase();
-          final sidecars = UniversalExportStore.companionsFor(file).length - 1;
-          final modified = file.lastModifiedSync();
-          final subtitle = StringBuffer(
-            '${_sizeLabel(file.lengthSync())} · '
-            '${DateFormat('yyyy/MM/dd HH:mm').format(modified)}',
-          );
-          if (sidecars > 0) {
-            subtitle.write(' · 附加档 $sidecars');
-          }
-
-          return ListTile(
-            leading: Icon(
-              ext == '.mp4'
-                  ? Icons.movie_outlined
-                  : Icons.audio_file_outlined,
-            ),
-            title: Text(
-              path.basename(file.path),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: Text(subtitle.toString()),
-            onTap: () => _share(file),
-            trailing: PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'share') {
-                  _share(file);
-                } else if (value == 'delete') {
-                  _delete(file);
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'share',
-                  child: Text('分享 / 储存到档案'),
+              for (final task in tasks)
+                SliverToBoxAdapter(child: _taskCard(context, task)),
+              if (_loading)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_error != null)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: FilledButton.icon(
+                      onPressed: _reload,
+                      icon: const Icon(Icons.refresh),
+                      label: Text('讀取失敗：$_error'),
+                    ),
+                  ),
+                )
+              else if (_files.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.video_file_outlined,
+                            size: 52,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            '還沒有通用影片檔案\n'
+                            '下載完成後會先保存在這裡；'
+                            '需要時再點檔案分享或存到「檔案」App。',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: scheme.onSurface),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              else
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => _fileRow(context, _files[index]),
+                    childCount: _files.length,
+                  ),
                 ),
-                PopupMenuItem(
-                  value: 'delete',
-                  child: Text('删除'),
-                ),
-              ],
-            ),
+              const SliverToBoxAdapter(child: SizedBox(height: 32)),
+            ],
           );
         },
       ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,7 +10,6 @@ import 'package:PiliPlus/pages/download/universal_export_view.dart';
 import 'package:PiliPlus/pages/video/widgets/full_danmaku_sheet.dart';
 import 'package:PiliPlus/utils/pilinara_native_bridge.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
-import 'package:PiliPlus/utils/share_utils.dart';
 import 'package:PiliPlus/utils/subtitle_utils.dart';
 import 'package:PiliPlus/utils/video_utils.dart';
 import 'package:collection/collection.dart' show IterableExtension;
@@ -17,7 +17,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 class _UniversalExportOptions {
   const _UniversalExportOptions({
@@ -248,7 +247,7 @@ abstract final class UniversalMediaExport {
 
     final selectedOptions = options;
     if (selectedOptions == null) return;
-    await _run(
+    await _enqueue(
       controller: controller,
       title: title,
       options: selectedOptions,
@@ -263,11 +262,16 @@ abstract final class UniversalMediaExport {
     return cleaned.isEmpty ? 'PiliNara' : cleaned;
   }
 
-  static Future<void> _download(String url, String filePath) async {
+  static Future<void> _download(
+    String url,
+    String filePath, {
+    void Function(int received, int total)? onProgress,
+  }) async {
     await Request.http11Dio.download(
       url,
       filePath,
       deleteOnError: true,
+      onReceiveProgress: onProgress,
     );
   }
 
@@ -284,7 +288,7 @@ abstract final class UniversalMediaExport {
     return aac.firstOrNull;
   }
 
-  static Future<void> _run({
+  static Future<void> _enqueue({
     required VideoDetailController controller,
     required String title,
     required _UniversalExportOptions options,
@@ -292,7 +296,7 @@ abstract final class UniversalMediaExport {
     final dash = controller.data.dash!;
     final audio = _selectAacAudio(dash.audio);
     if (audio == null) {
-      SmartDialog.showToast('这个资源没有可直接封装成 MP4/M4A 的 AAC 音轨');
+      SmartDialog.showToast('這個資源沒有可直接封裝成 MP4/M4A 的 AAC 音軌');
       return;
     }
 
@@ -301,123 +305,181 @@ abstract final class UniversalMediaExport {
       final candidates = dash.video!
           .where((e) => e.id == options.quality)
           .toList(growable: false);
+      if (candidates.isEmpty) {
+        SmartDialog.showToast('找不到所選畫質的影片流');
+        return;
+      }
       video = candidates.firstWhere(
         (e) => e.codecs == options.codec,
         orElse: () => candidates.first,
       );
     }
 
-    SmartDialog.showLoading(
-      msg: options.audioOnly ? '正在下载音讯…' : '正在下载影片与音讯…',
-    );
-
-    final workRoot = await getTemporaryDirectory();
-    final work = Directory(
-      path.join(
-        workRoot.path,
-        'pilinara-export-${DateTime.now().microsecondsSinceEpoch}',
-      ),
-    );
-    await work.create(recursive: true);
+    final audioUrl = VideoUtils.getCdnUrl(audio.playUrls, isAudio: true);
+    if (audioUrl.isEmpty) {
+      SmartDialog.showToast('沒有可用音訊下載地址');
+      return;
+    }
+    final videoUrl = options.audioOnly
+        ? null
+        : VideoUtils.getCdnUrl(video!.playUrls);
+    if (!options.audioOnly && (videoUrl == null || videoUrl.isEmpty)) {
+      SmartDialog.showToast('沒有可用影片下載地址');
+      return;
+    }
 
     final qualitySuffix = options.audioOnly
         ? 'Audio'
         : '${video?.height ?? options.quality}P';
     final baseName = _safeFileName('${title}_$qualitySuffix');
-    final audioPath = path.join(work.path, 'audio.m4a');
-    final videoPath = path.join(work.path, 'video.mp4');
     final outputPath = await UniversalExportStore.uniqueMediaPath(
       baseName: baseName,
       extension: options.audioOnly ? 'm4a' : 'mp4',
     );
     final outputStem = path.withoutExtension(outputPath);
 
-    final sharedPaths = <String>[];
+    String? subtitleUrl;
+    if (options.exportSubtitle && controller.subtitles.isNotEmpty) {
+      final selected = controller.vttSubtitlesIndex.value;
+      final index = selected > 0 && selected <= controller.subtitles.length
+          ? selected - 1
+          : 0;
+      subtitleUrl = controller.subtitles[index].subtitleUrl;
+    }
+    final cid = controller.cid.value;
+    final durationMs = controller.data.timeLength ??
+        controller.plPlayerController.durationInMilliseconds;
 
-    try {
-      final audioUrl = VideoUtils.getCdnUrl(audio.playUrls, isAudio: true);
-      if (audioUrl.isEmpty) throw StateError('没有可用音讯下载地址');
+    UniversalExportQueue.enqueue(
+      label: path.basename(outputPath),
+      runner: (report) async {
+        final workRoot = await getTemporaryDirectory();
+        final work = Directory(
+          path.join(
+            workRoot.path,
+            'pilinara-export-${DateTime.now().microsecondsSinceEpoch}',
+          ),
+        );
+        await work.create(recursive: true);
+        final audioPath = path.join(work.path, 'audio.m4a');
+        final videoPath = path.join(work.path, 'video.mp4');
 
-      if (options.audioOnly) {
-        await _download(audioUrl, audioPath);
-      } else {
-        final videoUrl = VideoUtils.getCdnUrl(video!.playUrls);
-        if (videoUrl.isEmpty) throw StateError('没有可用影片下载地址');
-        await Future.wait([
-          _download(videoUrl, videoPath),
-          _download(audioUrl, audioPath),
-        ]);
-      }
-
-      SmartDialog.dismiss();
-      SmartDialog.showLoading(
-        msg: options.audioOnly ? '正在快速封装 M4A…' : '正在快速封装 MP4…',
-      );
-
-      final resultPath = await PiliNaraNativeBridge.remux(
-        outputPath: outputPath,
-        videoPath: options.audioOnly ? null : videoPath,
-        audioPath: audioPath,
-        audioOnly: options.audioOnly,
-      );
-      sharedPaths.add(resultPath);
-
-      if (options.exportSubtitle && controller.subtitles.isNotEmpty) {
-        final selected = controller.vttSubtitlesIndex.value;
-        final index = selected > 0 && selected <= controller.subtitles.length
-            ? selected - 1
-            : 0;
-        final subtitle = controller.subtitles[index];
-        final url = subtitle.subtitleUrl;
-        if (url != null && url.isNotEmpty) {
-          final srt = await VideoHttp.getSubtitles(
-            url,
-            format: SubtitleFormat.srt,
-          );
-          if (srt != null) {
-            final srtPath = '$outputStem.srt';
-            await File(srtPath).writeAsString(srt, encoding: utf8);
-            sharedPaths.add(srtPath);
+        double? audioProgress;
+        double? videoProgress;
+        void emitDownloadProgress() {
+          if (options.audioOnly) {
+            report(audioProgress, '正在下載音訊');
+            return;
+          }
+          if (audioProgress != null && videoProgress != null) {
+            report((audioProgress! + videoProgress!) / 2, '正在下載影片與音訊');
+          } else {
+            report(null, '正在下載影片與音訊');
           }
         }
-      }
 
-      if (options.exportDanmaku) {
-        final durationMs = controller.data.timeLength ??
-            controller.plPlayerController.durationInMilliseconds;
-        final items = await DanmakuArchiveService.fetchAll(
-          cid: controller.cid.value,
-          durationMs: durationMs,
-        );
-        final xmlPath = '$outputStem.xml';
-        await File(xmlPath).writeAsString(
-          DanmakuArchiveService.toBilibiliXml(items),
-          encoding: utf8,
-        );
-        sharedPaths.add(xmlPath);
-      }
+        try {
+          if (options.audioOnly) {
+            await _download(
+              audioUrl,
+              audioPath,
+              onProgress: (received, total) {
+                audioProgress = total > 0 ? received / total : null;
+                emitDownloadProgress();
+              },
+            );
+          } else {
+            await Future.wait([
+              _download(
+                videoUrl!,
+                videoPath,
+                onProgress: (received, total) {
+                  videoProgress = total > 0 ? received / total : null;
+                  emitDownloadProgress();
+                },
+              ),
+              _download(
+                audioUrl,
+                audioPath,
+                onProgress: (received, total) {
+                  audioProgress = total > 0 ? received / total : null;
+                  emitDownloadProgress();
+                },
+              ),
+            ]);
+          }
 
-      SmartDialog.dismiss();
-      UniversalExportStore.notifyChanged();
-      SmartDialog.showToast(
-        '下载完成，已保存到「离线缓存 > 通用档案」',
-        displayTime: const Duration(seconds: 3),
-      );
+          report(null, options.audioOnly ? '正在快速封裝 M4A' : '正在快速封裝 MP4');
+          final resultPath = await PiliNaraNativeBridge.remux(
+            outputPath: outputPath,
+            videoPath: options.audioOnly ? null : videoPath,
+            audioPath: audioPath,
+            audioOnly: options.audioOnly,
+          );
 
-      await SharePlus.instance.share(
-        ShareParams(
-          subject: title,
-          files: [for (final file in sharedPaths) XFile(file)],
-          sharePositionOrigin: await ShareUtils.sharePositionOrigin,
-        ),
-      );
-    } catch (e) {
-      SmartDialog.dismiss();
-      SmartDialog.showToast(
-        '下载/封装失败：$e\n'
-        '若该编码无法封装，请改选同画质的 AVC 或 HEVC。',
-        displayTime: const Duration(seconds: 5),
-      );
-    }
+          var finalFile = File(resultPath);
+          if (!await finalFile.exists()) {
+            throw StateError('快速封裝完成但找不到輸出檔案：$resultPath');
+          }
+
+          if (path.normalize(finalFile.path) != path.normalize(outputPath)) {
+            final canonical = File(outputPath);
+            if (await canonical.exists()) {
+              await canonical.delete();
+            }
+            await finalFile.copy(outputPath);
+            finalFile = canonical;
+          }
+
+          final bytes = await finalFile.length();
+          if (bytes <= 0) {
+            throw StateError('輸出檔案大小為 0');
+          }
+
+          if (options.exportSubtitle &&
+              subtitleUrl != null &&
+              subtitleUrl!.isNotEmpty) {
+            report(null, '正在輸出字幕');
+            final srt = await VideoHttp.getSubtitles(
+              subtitleUrl!,
+              format: SubtitleFormat.srt,
+            );
+            if (srt != null) {
+              await File('$outputStem.srt').writeAsString(srt, encoding: utf8);
+            }
+          }
+
+          if (options.exportDanmaku) {
+            report(null, '正在輸出彈幕 XML');
+            final items = await DanmakuArchiveService.fetchAll(
+              cid: cid,
+              durationMs: durationMs,
+            );
+            await File('$outputStem.xml').writeAsString(
+              DanmakuArchiveService.toBilibiliXml(items),
+              encoding: utf8,
+            );
+          }
+
+          // Do not auto-open the iOS share sheet. The persistent file is now
+          // authoritative; sharing/saving to Files is an optional later action
+          // from Offline Cache > Universal Files.
+          UniversalExportStore.notifyChanged();
+          report(1, '已保存到通用檔案');
+        } finally {
+          try {
+            if (await work.exists()) {
+              await work.delete(recursive: true);
+            }
+          } catch (_) {}
+        }
+      },
+    );
+
+    SmartDialog.showToast(
+      '已加入背景下載，可繼續使用 App。完成後會保留在「離線快取 > 通用檔案」。',
+      displayTime: const Duration(seconds: 4),
+    );
   }
+
 }
