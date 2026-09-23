@@ -1,0 +1,68 @@
+name: Door581 Probe IPA
+
+on:
+  push:
+    branches:
+      - door581-probe
+    paths:
+      - 'door581-probe/source.part*'
+      - '.github/workflows/door581-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: door581-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Reconstruct and verify Probe source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .door581-build
+          cat door581-probe/source.part* > .door581-build/source.b64
+          python3 - <<'PY'
+          import base64, hashlib, pathlib
+          root = pathlib.Path(".door581-build")
+          encoded = root.joinpath("source.b64").read_text().encode()
+          raw = base64.b64decode(encoded, validate=True)
+          sha = hashlib.sha256(raw).hexdigest()
+          expected = "075815c34cb4d8b9270343555135d62500558fd1a83ccf55e93e8e57975137a8"
+          print("SOURCE ZIP SHA-256:", sha)
+          if sha != expected:
+              raise SystemExit(f"source SHA mismatch: {sha} != {expected}")
+          root.joinpath("source.zip").write_bytes(raw)
+          PY
+          unzip -q .door581-build/source.zip -d .door581-build
+          test -d .door581-build/581_DoorMap_Probe_v0.0.1
+
+      - name: Build unsigned iPhone IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .door581-build/581_DoorMap_Probe_v0.0.1
+          bash tools/build_ipa.sh
+
+      - name: Upload IPA and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Door581-Probe-v0.0.1
+          path: .door581-build/581_DoorMap_Probe_v0.0.1/artifacts/
+          if-no-files-found: error
+          retention-days: 14
