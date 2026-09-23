@@ -6,6 +6,7 @@ on:
       - door581-probe
     paths:
       - 'door581-probe/source.part*'
+      - 'door581-probe/v002_patch.py'
       - '.github/workflows/door581-probe.yml'
   workflow_dispatch:
 
@@ -43,13 +44,14 @@ jobs:
           raw = base64.b64decode(encoded, validate=True)
           sha = hashlib.sha256(raw).hexdigest()
           expected = "075815c34cb4d8b9270343555135d62500558fd1a83ccf55e93e8e57975137a8"
-          print("SOURCE ZIP SHA-256:", sha)
+          print("BASE SOURCE ZIP SHA-256:", sha)
           if sha != expected:
               raise SystemExit(f"source SHA mismatch: {sha} != {expected}")
           root.joinpath("source.zip").write_bytes(raw)
           PY
           unzip -q .door581-build/source.zip -d .door581-build
           test -d .door581-build/581_DoorMap_Probe_v0.0.1
+          python3 door581-probe/v002_patch.py .door581-build/581_DoorMap_Probe_v0.0.1
 
       - name: Build unsigned iPhone IPA
         shell: bash
@@ -62,7 +64,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Door581-Probe-v0.0.1
+          name: Door581-Probe-v0.0.2
           path: .door581-build/581_DoorMap_Probe_v0.0.1/artifacts/
           if-no-files-found: error
           retention-days: 14
