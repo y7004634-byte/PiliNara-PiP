@@ -1,0 +1,46 @@
+name: Offer Probe Canary Build
+
+on:
+  push:
+    branches:
+      - tmp/offer-probe-canary-build
+    paths:
+      - 'tmp-offer-probe/**'
+      - '.github/workflows/offer-probe-canary.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ARM64 iOS dylib
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          CLANG="$(xcrun --sdk iphoneos --find clang)"
+          "$CLANG" -target arm64-apple-ios17.0 -isysroot "$SDK"             -O0 -ffreestanding -fno-builtin -fno-stack-protector -fPIC             -c tmp-offer-probe/probe.c -o probe.o
+          "$CLANG" -target arm64-apple-ios17.0 -isysroot "$SDK"             -fPIC -c tmp-offer-probe/hook.S -o hook.o
+          "$CLANG" -target arm64-apple-ios17.0 -isysroot "$SDK"             -dynamiclib -Wl,-undefined,dynamic_lookup             -Wl,-install_name,@rpath/OfferProbeCanary.dylib             probe.o hook.o -o OfferProbeCanary.dylib
+          codesign --force --sign - --timestamp=none OfferProbeCanary.dylib
+      - name: Verify Mach-O
+        shell: bash
+        run: |
+          set -euxo pipefail
+          file OfferProbeCanary.dylib | tee build_manifest.txt
+          xcrun otool -hv OfferProbeCanary.dylib | tee -a build_manifest.txt
+          xcrun otool -l OfferProbeCanary.dylib |             sed -n '/LC_BUILD_VERSION/,+5p' | tee -a build_manifest.txt
+          xcrun otool -L OfferProbeCanary.dylib | tee -a build_manifest.txt
+          xcrun nm -u OfferProbeCanary.dylib | tee -a build_manifest.txt
+          shasum -a 256 OfferProbeCanary.dylib | tee -a build_manifest.txt
+          codesign -dv --verbose=4 OfferProbeCanary.dylib 2>&1 | tee -a build_manifest.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OfferProbeCanary
+          path: |
+            OfferProbeCanary.dylib
+            build_manifest.txt
+          if-no-files-found: error
