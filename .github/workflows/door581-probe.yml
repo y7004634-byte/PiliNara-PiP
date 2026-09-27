@@ -7,6 +7,7 @@ on:
     paths:
       - 'door581-probe/source.part*'
       - 'door581-probe/v002_patch.py'
+      - 'door581-probe/v005_waze_patch.py'
       - '.github/workflows/door581-probe.yml'
   workflow_dispatch:
 
@@ -52,6 +53,7 @@ jobs:
           unzip -q .door581-build/source.zip -d .door581-build
           test -d .door581-build/581_DoorMap_Probe_v0.0.1
           python3 door581-probe/v002_patch.py .door581-build/581_DoorMap_Probe_v0.0.1
+          python3 door581-probe/v005_waze_patch.py .door581-build/581_DoorMap_Probe_v0.0.1
 
       - name: Build unsigned iPhone IPA
         shell: bash
@@ -64,7 +66,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Door581-Probe-v0.0.2
+          name: Door581-Probe-v0.0.5-UberWaze
           path: .door581-build/581_DoorMap_Probe_v0.0.1/artifacts/
           if-no-files-found: error
           retention-days: 14
