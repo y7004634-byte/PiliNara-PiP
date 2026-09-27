@@ -198,6 +198,16 @@ if verify_anchor not in t:
     raise SystemExit("build_ipa verification anchor missing")
 build.write_text(t.replace(verify_anchor, verify_block, 1))
 
+# Update the original static gate so the intentional second receiver scheme does
+# not look like a regression.
+static = root / "tools/static_check.py"
+t = static.read_text()
+old_static = "assert info['CFBundleURLTypes'][0]['CFBundleURLSchemes']==['door581']"
+new_static = "assert info['CFBundleURLTypes'][0]['CFBundleURLSchemes']==['door581','waze']"
+if old_static not in t:
+    raise SystemExit("static_check URL scheme anchor missing")
+static.write_text(t.replace(old_static, new_static, 1))
+
 # Regression tests: exact Uber/Waze handoff accepted; malformed or non-navigation
 # Waze URLs rejected. Existing door581 tests remain untouched.
 test_path = root / "Tests/CoreTests.swift"
