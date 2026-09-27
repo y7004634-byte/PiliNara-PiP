@@ -91,6 +91,52 @@ def patch_tab_view(root: Path) -> None:
     path.write_text(s, encoding="utf-8")
 
 
+
+def patch_v3_shell(root: Path) -> None:
+    path = root / "LiveContainerSwiftUI" / "Views" / "V3UnifiedShell.swift"
+    if not path.exists():
+        raise SystemExit(f"V3 unified shell missing: {path}")
+    s = path.read_text(encoding="utf-8")
+    if "LC_UBER_WAZE_V3_DIRECT_V1" in s:
+        return
+
+    old = """    private func dispatchURL(_ url: URL) {
+"""
+    new = """    // LC_UBER_WAZE_V3_DIRECT_V1
+    private func dispatchURL(_ url: URL) {
+        if url.scheme?.lowercased() == "waze" {
+            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  let ll = components.queryItems?.first(where: { $0.name.lowercased() == "ll" })?.value else {
+                return
+            }
+
+            let pieces = ll.split(separator: ",", omittingEmptySubsequences: false)
+            guard pieces.count == 2,
+                  let lat = Double(pieces[0].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let lng = Double(pieces[1].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  lat.isFinite, lng.isFinite,
+                  (-90.0...90.0).contains(lat),
+                  (-180.0...180.0).contains(lng) else {
+                return
+            }
+
+            var target = URLComponents()
+            target.scheme = "door581"
+            target.host = "dest"
+            target.queryItems = [
+                URLQueryItem(name: "lat", value: String(lat)),
+                URLQueryItem(name: "lng", value: String(lng))
+            ]
+            if let url = target.url {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+            return
+        }
+"""
+    s = replace_once(s, old, new, "V3UnifiedShell dispatchURL")
+    path.write_text(s, encoding="utf-8")
+
+
 def patch_guest_hooks(root: Path) -> None:
     path = root / "TweakLoader" / "UIKit+GuestHooks.m"
     s = path.read_text(encoding="utf-8")
@@ -185,6 +231,7 @@ def main() -> None:
     root = Path(sys.argv[1]).resolve()
     patch_info(root)
     patch_tab_view(root)
+    patch_v3_shell(root)
     patch_guest_hooks(root)
     print("LC Uber->Waze->Door581 direct routing patch applied")
 
