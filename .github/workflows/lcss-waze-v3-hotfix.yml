@@ -1,0 +1,190 @@
+name: LC Waze V3 hotfix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [lcss-waze-v3-hotfix]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: lcss-waze-v3-hotfix-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LIVE_CONTAINER_REF: 12377cf3b91d51739a33f14a302e5f522b238593
+  BASE_RUN_ID: "36286470277"
+
+jobs:
+  host-hotfix:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout pinned LiveContainer
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/LiveContainer/LiveContainer.git work/LiveContainer
+          git -C work/LiveContainer checkout --detach "$LIVE_CONTAINER_REF"
+          git -C work/LiveContainer submodule update --init --recursive --depth=1
+          test "$(git -C work/LiveContainer rev-parse HEAD)" = "$LIVE_CONTAINER_REF"
+
+      - name: Download proven generated-source evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: combined-v3-debug-evidence
+          path: debug-evidence
+          repository: y7004634-byte/PiliNara-PiP
+          run-id: ${{ env.BASE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download proven NO-WIDGET base IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: LiveContainer-SideStore-AutoRefresh-IPA
+          path: base-artifact
+          repository: y7004634-byte/PiliNara-PiP
+          run-id: ${{ env.BASE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore exact generated host sources and patch V3 URL intake
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -f debug-evidence/generated/LiveContainerSwiftUI/App/AppDelegate.swift             work/LiveContainer/LiveContainerSwiftUI/App/AppDelegate.swift
+          cp -f debug-evidence/generated/LiveContainerSwiftUI/Models/AppLayoutStyle.swift             work/LiveContainer/LiveContainerSwiftUI/Models/AppLayoutStyle.swift
+          cp -f debug-evidence/generated/LiveContainerSwiftUI/Views/V3UnifiedShell.swift             work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+          cp -f debug-evidence/generated/LiveContainerSwiftUI/Views/AppList/LCAppListView.swift             work/LiveContainer/LiveContainerSwiftUI/Views/AppList/LCAppListView.swift
+          cp -f debug-evidence/generated/LiveContainerSwiftUI/Views/AppList/LCGridAppCell.swift             work/LiveContainer/LiveContainerSwiftUI/Views/AppList/LCGridAppCell.swift
+          mkdir -p work/LiveContainer/LiveContainerSwiftUI/Views/AppList/LCAppBanner
+          cp -f debug-evidence/generated/LiveContainerSwiftUI/Views/AppList/LCAppBanner/*.swift             work/LiveContainer/LiveContainerSwiftUI/Views/AppList/LCAppBanner/
+
+          cp -f debug-evidence/generated/SideStoreSupport/SideStore.swift             work/LiveContainer/SideStoreSupport/SideStore.swift
+          cp -f debug-evidence/generated/SideStoreSupport/SideStoreClient.swift             work/LiveContainer/SideStoreSupport/SideStoreClient.swift
+          cp -f debug-evidence/generated/SideStoreSupport/XPCServer.h             work/LiveContainer/SideStoreSupport/XPCServer.h
+          cp -f debug-evidence/generated/SideStoreSupport/XPCServer.m             work/LiveContainer/SideStoreSupport/XPCServer.m
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift")
+          s = p.read_text(encoding="utf-8")
+          marker = "LC_UBER_WAZE_V3_DIRECT_V2"
+          if marker not in s:
+              old = "    private func dispatchURL(_ url: URL) {\n"
+              if s.count(old) != 1:
+                  raise SystemExit(f"V3 dispatch anchor count={s.count(old)}")
+              new = """    // LC_UBER_WAZE_V3_DIRECT_V2
+              private func dispatchURL(_ url: URL) {
+                  if url.scheme?.lowercased() == "waze" {
+                      guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                            let ll = components.queryItems?.first(where: { $0.name.lowercased() == "ll" })?.value else {
+                          return
+                      }
+                      let pieces = ll.split(separator: ",", omittingEmptySubsequences: false)
+                      guard pieces.count == 2,
+                            let lat = Double(pieces[0].trimmingCharacters(in: .whitespacesAndNewlines)),
+                            let lng = Double(pieces[1].trimmingCharacters(in: .whitespacesAndNewlines)),
+                            lat.isFinite, lng.isFinite,
+                            (-90.0...90.0).contains(lat),
+                            (-180.0...180.0).contains(lng) else {
+                          return
+                      }
+                      var target = URLComponents()
+                      target.scheme = "door581"
+                      target.host = "dest"
+                      target.queryItems = [
+                          URLQueryItem(name: "lat", value: String(lat)),
+                          URLQueryItem(name: "lng", value: String(lng))
+                      ]
+                      if let targetURL = target.url {
+                          UIApplication.shared.open(targetURL, options: [:], completionHandler: nil)
+                      }
+                      return
+                  }
+              """
+              s = s.replace(old, new, 1)
+              p.write_text(s, encoding="utf-8")
+          PY
+
+          grep -Fq 'LC_UBER_WAZE_V3_DIRECT_V2' work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+          grep -Fq 'target.scheme = "door581"' work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+          grep -Fq 'url.scheme?.lowercased() == "waze"' work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+          swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+
+      - name: Select Xcode 26.4
+        uses: maxim-lobanov/setup-xcode@v1.6.0
+        with:
+          xcode-version: "26.4"
+
+      - name: Build only LiveContainerSwiftUI framework
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project work/LiveContainer/LiveContainer.xcodeproj             -target LiveContainerSwiftUI -sdk iphoneos -configuration Release             -derivedDataPath "$RUNNER_TEMP/lc-v3-hotfix"             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build             2>&1 | tee hotfix-build.log
+          test -f "$RUNNER_TEMP/lc-v3-hotfix/Build/Products/Release-iphoneos/LiveContainerSwiftUI.framework/LiveContainerSwiftUI"
+
+      - name: Overlay framework onto proven IPA and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/base
+          cp base-artifact/LiveContainer-SideStore-AutoRefresh.ipa out/base.ipa
+          cd out/base
+          unzip -q ../base.ipa
+          rm -rf Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework
+          cp -R "$RUNNER_TEMP/lc-v3-hotfix/Build/Products/Release-iphoneos/LiveContainerSwiftUI.framework"             Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework
+          rm -rf _CodeSignature Payload/LiveContainer.app/_CodeSignature
+          zip -qry ../LCSS-v3.0.1-userfix8-WAZE-DIRECT-V3-NO-WIDGET.ipa Payload
+          cd ../..
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, plistlib, zipfile
+          ipa=Path("out/LCSS-v3.0.1-userfix8-WAZE-DIRECT-V3-NO-WIDGET.ipa")
+          with zipfile.ZipFile(ipa) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              info=plistlib.loads(z.read("Payload/LiveContainer.app/Info.plist"))
+              schemes=[s for t in info.get("CFBundleURLTypes",[]) for s in t.get("CFBundleURLSchemes",[])]
+              assert schemes and schemes[0] == "livecontainer", schemes
+              assert "waze" in [s.lower() for s in schemes], schemes
+              assert not any("LiveWidgetExtension.appex/" in n for n in names)
+              appex=[n for n in names if n.endswith(".appex/Info.plist")]
+              assert len(appex)==3, appex
+              tweak=z.read("Payload/LiveContainer.app/Frameworks/TweakLoader.dylib")
+              assert b"door581" in tweak and b"waze" in tweak
+              fw=z.read("Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework/LiveContainerSwiftUI")
+              assert len(fw) > 100000
+          sha=hashlib.sha256(ipa.read_bytes()).hexdigest()
+          src=Path("work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift")
+          src_sha=hashlib.sha256(src.read_bytes()).hexdigest()
+          Path("out/VERIFY.txt").write_text(
+              "V3 source patch: PASS\n"
+              "Swift parse: PASS\n"
+              "LiveContainerSwiftUI-only build: PASS\n"
+              "Base IPA: CI run 36286470277 (full build PASS)\n"
+              "waze URL scheme: PASS\n"
+              "TweakLoader waze/door581 fallback: PASS\n"
+              "LiveWidgetExtension absent: PASS\n"
+              "Remaining app extensions: 3\n"
+              f"V3UnifiedShell SHA256: {src_sha}\n"
+              f"IPA SHA256: {sha}\n",
+              encoding="utf-8"
+          )
+          print("IPA_SHA256="+sha)
+          print("V3_SOURCE_SHA256="+src_sha)
+          PY
+
+      - name: Upload hotfix IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LCSS-WAZE-DIRECT-V3-NO-WIDGET
+          path: |
+            out/LCSS-v3.0.1-userfix8-WAZE-DIRECT-V3-NO-WIDGET.ipa
+            out/VERIFY.txt
+            hotfix-build.log
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
