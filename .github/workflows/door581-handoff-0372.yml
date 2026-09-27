@@ -1,0 +1,44 @@
+name: Door Map encrypted source handoff
+on:
+  push:
+    branches: [door581-planner-v0372]
+    paths: ['.github/workflows/door581-handoff-0372.yml']
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Fetch ciphertext only (no source code or decryption key)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir encrypted
+          for file in manifest.json part-000.bin part-001.bin part-002.bin; do
+            curl --fail --location --retry 5 --retry-delay 4 --max-time 60 \
+              --user-agent 'Mozilla/5.0 DoorMap-build-handoff' \
+              "https://handoff-xfer-0372.rider-door-map-canary.pages.dev/$file" \
+              --output "encrypted/$file"
+          done
+          python3 - <<'PY'
+          import json, pathlib, hashlib
+          root=pathlib.Path('encrypted')
+          meta=json.loads((root/'manifest.json').read_text())
+          assert meta['schema']=='581-encrypted-artifact-v1'
+          assert meta['plainSHA256']=='ac239b0bca7bc52c0d9b09507500635fe0db17aeeb84f08ec71c24a0e2943d07'
+          assert len(meta['parts'])==3
+          for index,item in enumerate(meta['parts']):
+              assert item['name']==f'part-{index:03}.bin'
+              data=(root/item['name']).read_bytes()
+              assert len(data)==item['bytes']
+              assert hashlib.sha256(data).hexdigest()==item['sha256']
+          assert 'key' not in meta
+          print('Three ciphertext parts verified; no plaintext or decryption key in this workflow.')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DoorMap-v0372-encrypted-complete-source
+          path: encrypted/
+          compression-level: 0
+          retention-days: 1
