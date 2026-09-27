@@ -540,6 +540,11 @@ jobs:
             python3 builder/scripts/patch_combined_refresh_contract.py work/EmbeddedSideStore
             python3 builder/scripts/patch_combined_service_startup.py work/LiveContainer work/EmbeddedSideStore v3
             python3 builder/scripts/patch_combined_service_startup.py work/LiveContainer work/EmbeddedSideStore v3
+            python3 userfix-repo/tools/lcss_waze_direct.py work/LiveContainer
+            grep -Fq 'LC_UBER_WAZE_DIRECT_V1' work/LiveContainer/TweakLoader/UIKit+GuestHooks.m
+            grep -Fq 'LC_UBER_WAZE_DIRECT_V1' work/LiveContainer/LiveContainerSwiftUI/Views/LCTabView.swift
+            grep -Fq '<string>waze</string>' work/LiveContainer/LiveContainer/Info.plist
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/LCTabView.swift
             swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/App/AppDelegate.swift
             swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/App/LiveContainerAutoRefreshAlarm.swift
             swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/Settings/LCEmbeddedSideStoreRefreshView.swift
@@ -669,6 +674,64 @@ jobs:
             --output artifacts/LiveContainer-SideStore-AutoRefresh.ipa 2>&1 | tee artifacts/logs/combined-packaging.log
           python3 builder/scripts/patch_combined_refresh_contract.py --verify-ipa artifacts/LiveContainer-SideStore-AutoRefresh.ipa \
             2>&1 | tee artifacts/logs/runtime-contract-verification.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, plistlib, zipfile, os
+
+          ipa = Path("artifacts/LiveContainer-SideStore-AutoRefresh.ipa")
+          tmp = ipa.with_suffix(".no-widget.tmp")
+          widget_prefix = "Payload/LiveContainer.app/PlugIns/LiveWidgetExtension.appex/"
+
+          with zipfile.ZipFile(ipa, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
+              for info in zin.infolist():
+                  if info.filename.startswith(widget_prefix):
+                      continue
+                  data = zin.read(info.filename)
+                  clone = zipfile.ZipInfo(info.filename, info.date_time)
+                  clone.compress_type = info.compress_type
+                  clone.comment = info.comment
+                  clone.extra = info.extra
+                  clone.create_system = info.create_system
+                  clone.create_version = info.create_version
+                  clone.extract_version = info.extract_version
+                  clone.flag_bits = info.flag_bits
+                  clone.internal_attr = info.internal_attr
+                  clone.external_attr = info.external_attr
+                  zout.writestr(clone, data)
+          os.replace(tmp, ipa)
+
+          with zipfile.ZipFile(ipa, "r") as z:
+              names = z.namelist()
+              info = plistlib.loads(z.read("Payload/LiveContainer.app/Info.plist"))
+              schemes = [
+                  scheme
+                  for url_type in info.get("CFBundleURLTypes", [])
+                  for scheme in url_type.get("CFBundleURLSchemes", [])
+              ]
+              assert schemes and schemes[0] == "livecontainer", schemes
+              assert "waze" in [s.lower() for s in schemes], schemes
+              assert info.get("LCUberWazeDirect") == 1
+              assert not any(name.startswith(widget_prefix) for name in names)
+              extension_plists = [name for name in names if name.endswith(".appex/Info.plist")]
+              assert len(extension_plists) == 3, extension_plists
+              executable = z.read("Payload/LiveContainer.app/LiveContainer")
+              tweak = z.read("Payload/LiveContainer.app/Frameworks/TweakLoader.dylib")
+              swiftui = z.read("Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework/LiveContainerSwiftUI")
+              assert b"waze" in executable or b"waze" in swiftui
+              assert b"door581" in tweak
+              assert b"waze" in tweak
+
+          sha = hashlib.sha256(ipa.read_bytes()).hexdigest()
+          Path("artifacts/logs/waze-direct-no-widget-verification.txt").write_text(
+              "LC Uber Waze direct routing: PASS\n"
+              "LiveWidgetExtension removed: PASS\n"
+              "Remaining appex count: 3\n"
+              f"URL schemes: {schemes}\n"
+              f"SHA256: {sha}\n",
+              encoding="utf-8"
+          )
+          print("Waze direct + no-widget final verification PASS", sha)
+          PY
           printf 'builder_commit=%s\n' "$GITHUB_SHA" > artifacts/builder-commit.txt
           python3 builder/scripts/combined_build_evidence.py collect --product v3.0.1 \
             --ipa artifacts/LiveContainer-SideStore-AutoRefresh.ipa --output artifacts/debug-evidence --source work/LiveContainer --side-source work/EmbeddedSideStore \
@@ -707,6 +770,7 @@ jobs:
             artifacts/LiveContainer-SideStore-AutoRefresh.runtime-verification.json
             artifacts/builder-commit.txt
             artifacts/logs/upstream-auth-provenance.txt
+            artifacts/logs/waze-direct-no-widget-verification.txt
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
