@@ -122,8 +122,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild -project work/LiveContainer/LiveContainer.xcodeproj             -target LiveContainerSwiftUI -sdk iphoneos -configuration Release             -derivedDataPath "$RUNNER_TEMP/lc-v3-hotfix"             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build             2>&1 | tee hotfix-build.log
-          test -f "$RUNNER_TEMP/lc-v3-hotfix/Build/Products/Release-iphoneos/LiveContainerSwiftUI.framework/LiveContainerSwiftUI"
+          xcodebuild -project work/LiveContainer/LiveContainer.xcodeproj -target LiveContainerSwiftUI -sdk iphoneos -configuration Release SYMROOT="$RUNNER_TEMP/lc-v3-hotfix" OBJROOT="$RUNNER_TEMP/lc-v3-hotfix-obj" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee hotfix-build.log
+          test -f "$RUNNER_TEMP/lc-v3-hotfix/Release-iphoneos/LiveContainerSwiftUI.framework/LiveContainerSwiftUI"
 
       - name: Overlay framework onto proven IPA and verify
         shell: bash
@@ -134,7 +134,7 @@ jobs:
           cd out/base
           unzip -q ../base.ipa
           rm -rf Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework
-          cp -R "$RUNNER_TEMP/lc-v3-hotfix/Build/Products/Release-iphoneos/LiveContainerSwiftUI.framework"             Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework
+          cp -R "$RUNNER_TEMP/lc-v3-hotfix/Release-iphoneos/LiveContainerSwiftUI.framework" Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework
           rm -rf _CodeSignature Payload/LiveContainer.app/_CodeSignature
           zip -qry ../LCSS-v3.0.1-userfix8-WAZE-DIRECT-V3-NO-WIDGET.ipa Payload
           cd ../..
