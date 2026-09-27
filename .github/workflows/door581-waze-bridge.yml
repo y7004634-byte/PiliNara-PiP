@@ -1,0 +1,38 @@
+name: Door581 Waze Coordinate Bridge
+
+on:
+  push:
+    branches:
+      - door581-waze-bridge
+    paths:
+      - 'door581-waze-bridge/**'
+      - '.github/workflows/door581-waze-bridge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: door581-waze-bridge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build unsigned bridge IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd door581-waze-bridge
+          bash tools/build_ipa.sh
+      - name: Upload IPA and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Door581-Waze-Bridge-v0.1.0
+          path: door581-waze-bridge/artifacts/
+          if-no-files-found: error
+          retention-days: 14
