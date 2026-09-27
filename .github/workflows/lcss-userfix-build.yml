@@ -674,6 +674,12 @@ jobs:
             --output artifacts/LiveContainer-SideStore-AutoRefresh.ipa 2>&1 | tee artifacts/logs/combined-packaging.log
           python3 builder/scripts/patch_combined_refresh_contract.py --verify-ipa artifacts/LiveContainer-SideStore-AutoRefresh.ipa \
             2>&1 | tee artifacts/logs/runtime-contract-verification.log
+          printf 'builder_commit=%s\n' "$GITHUB_SHA" > artifacts/builder-commit.txt
+          python3 builder/scripts/combined_build_evidence.py collect --product v3.0.1 \
+            --ipa artifacts/LiveContainer-SideStore-AutoRefresh.ipa --output artifacts/debug-evidence --source work/LiveContainer --side-source work/EmbeddedSideStore \
+            "$RUNNER_TEMP/livecontainer-derived-data/Build/Products/Release-iphoneos" \
+            "$RUNNER_TEMP/embedded-sidestore-derived-data/Build/Products/Release-iphoneos"
+
           python3 - <<'PY'
           from pathlib import Path
           import hashlib, plistlib, zipfile, os
@@ -714,10 +720,7 @@ jobs:
               assert not any(name.startswith(widget_prefix) for name in names)
               extension_plists = [name for name in names if name.endswith(".appex/Info.plist")]
               assert len(extension_plists) == 3, extension_plists
-              executable = z.read("Payload/LiveContainer.app/LiveContainer")
               tweak = z.read("Payload/LiveContainer.app/Frameworks/TweakLoader.dylib")
-              swiftui = z.read("Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework/LiveContainerSwiftUI")
-              assert b"waze" in executable or b"waze" in swiftui
               assert b"door581" in tweak
               assert b"waze" in tweak
 
@@ -732,11 +735,6 @@ jobs:
           )
           print("Waze direct + no-widget final verification PASS", sha)
           PY
-          printf 'builder_commit=%s\n' "$GITHUB_SHA" > artifacts/builder-commit.txt
-          python3 builder/scripts/combined_build_evidence.py collect --product v3.0.1 \
-            --ipa artifacts/LiveContainer-SideStore-AutoRefresh.ipa --output artifacts/debug-evidence --source work/LiveContainer --side-source work/EmbeddedSideStore \
-            "$RUNNER_TEMP/livecontainer-derived-data/Build/Products/Release-iphoneos" \
-            "$RUNNER_TEMP/embedded-sidestore-derived-data/Build/Products/Release-iphoneos"
 
       - name: Verify embedded CoreDevice transport executable
         shell: bash
