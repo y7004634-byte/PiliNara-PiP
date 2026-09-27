@@ -158,12 +158,45 @@ s = s.replace("0.0.2", "0.0.5")
 vc_path.write_text(s)
 
 # Keep generated build metadata aligned with the IPA version after v002.
-for rel in ["tools/build_ipa.sh", "tools/generate_project.py"]:
-    p = root / rel
-    t = p.read_text()
-    if "0.0.2" not in t:
-        raise SystemExit(f"version anchor missing: {rel}")
-    p.write_text(t.replace("0.0.2", "0.0.5"))
+# generate_project.py rewrites Info.plist during tools/check.sh, so the receiver
+# scheme MUST also be present in the generator or it will silently disappear.
+gen = root / "tools/generate_project.py"
+t = gen.read_text()
+if "0.0.2" not in t:
+    raise SystemExit("version anchor missing: tools/generate_project.py")
+t = t.replace("0.0.2", "0.0.5")
+old_url = "'CFBundleURLTypes':[{'CFBundleURLName':'com.door581.probe.destination','CFBundleURLSchemes':['door581'],'CFBundleTypeRole':'Editor'}],"
+new_url = "'CFBundleURLTypes':[{'CFBundleURLName':'com.door581.probe.destination','CFBundleURLSchemes':['door581','waze'],'CFBundleTypeRole':'Editor'}],"
+if old_url not in t:
+    raise SystemExit("generate_project URL scheme anchor missing")
+t = t.replace(old_url, new_url, 1)
+t = t.replace("'CFBundleVersion':'1',", "'CFBundleVersion':'5',", 1)
+t = t.replace("'CURRENT_PROJECT_VERSION':'1'", "'CURRENT_PROJECT_VERSION':'5'", 1)
+gen.write_text(t)
+
+build = root / "tools/build_ipa.sh"
+t = build.read_text()
+if "0.0.2" not in t:
+    raise SystemExit("version anchor missing: tools/build_ipa.sh")
+t = t.replace("0.0.2", "0.0.5")
+verify_anchor = '''test -f "$APP/ProbeBridge.js"
+'''
+verify_block = '''test -f "$APP/ProbeBridge.js"
+# Hard fail if project generation stripped the Uber/Waze receiver registration.
+python3 - "$APP/Info.plist" <<'PYVERIFY'
+import plistlib, sys
+info = plistlib.load(open(sys.argv[1], "rb"))
+schemes = [s for item in info.get("CFBundleURLTypes", []) for s in item.get("CFBundleURLSchemes", [])]
+assert "door581" in schemes, schemes
+assert "waze" in schemes, schemes
+assert info.get("CFBundleShortVersionString") == "0.0.5", info.get("CFBundleShortVersionString")
+assert info.get("CFBundleVersion") == "5", info.get("CFBundleVersion")
+print("INFO.PLIST RECEIVER CHECK: PASS", schemes)
+PYVERIFY
+'''
+if verify_anchor not in t:
+    raise SystemExit("build_ipa verification anchor missing")
+build.write_text(t.replace(verify_anchor, verify_block, 1))
 
 # Regression tests: exact Uber/Waze handoff accepted; malformed or non-navigation
 # Waze URLs rejected. Existing door581 tests remain untouched.
