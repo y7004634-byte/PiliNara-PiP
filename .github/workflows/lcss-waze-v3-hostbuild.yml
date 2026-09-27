@@ -1,0 +1,648 @@
+name: LC Waze V3 host-only rebuild
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [lcss-waze-v3-hostbuild]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: lcss-waze-v3-hostbuild-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LIVE_CONTAINER_REF: 12377cf3b91d51739a33f14a302e5f522b238593
+  EMBEDDED_SIDESTORE_REF: ff25922e5c13ccfafd83bda5092910d848ebd409
+  MINIMUXER_REF: 98c3c79982f813878e922ab42f9545314a700f0c
+  SIDESIGN_REF: a731c0d5a9a6617c7b385ae493e07ffb7f81cd5d
+  SIDESIGN_GSA_FIX: 35993d7f68950ce00d6bf1fd0fbcaa7bef51dc9c
+  IDEVICE_REF: ebd7dadfc55d1c4facee3d11ecf5b28e20548b57
+  JKTCP_REF: e674e1eee6d5943e13b1eba0bd24a9dd0b2fa020
+
+jobs:
+  host-hotfix:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - name: Checkout NRG v3.0.1 builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/NRG-Wardog/sidestore-auto-refresh.git builder
+          git -C builder checkout --detach 6f0a144936c789bd7557d93ecf752888fddbb256
+
+      - name: Checkout userfix patcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch lcss-userfix-build https://github.com/y7004634-byte/PiliNara-PiP.git userfix-repo
+
+      - name: Checkout pinned LiveContainer sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/logs
+          git clone --filter=blob:none https://github.com/LiveContainer/LiveContainer.git work/LiveContainer
+          git -C work/LiveContainer checkout --detach "$LIVE_CONTAINER_REF"
+          git -C work/LiveContainer submodule update --init --recursive --depth=1
+
+      - name: Checkout pinned embedded SideStore sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/LiveContainer/SideStore.git work/EmbeddedSideStore
+          git -C work/EmbeddedSideStore checkout --detach "$EMBEDDED_SIDESTORE_REF"
+          git -C work/EmbeddedSideStore submodule update --init --recursive --depth=1
+
+      - name: Checkout pinned idevice
+        uses: actions/checkout@v4
+        with:
+          repository: SideStore/idevice
+          ref: ${{ env.IDEVICE_REF }}
+          path: idevice
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Checkout pinned jktcp
+        uses: actions/checkout@v4
+        with:
+          repository: SideStore/jktcp
+          ref: ${{ env.JKTCP_REF }}
+          path: jktcp
+          fetch-depth: 1
+
+      - name: Verify exact source revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C work/LiveContainer rev-parse HEAD)" = "$LIVE_CONTAINER_REF"
+          test "$(git -C work/EmbeddedSideStore rev-parse HEAD)" = "$EMBEDDED_SIDESTORE_REF"
+          test "$(git -C work/EmbeddedSideStore/Dependencies/minimuxer rev-parse HEAD)" = "$MINIMUXER_REF"
+          test "$(git -C work/EmbeddedSideStore/Dependencies/SideSign rev-parse HEAD)" = "$SIDESIGN_REF"
+          # Verify upstream resolution; never independently checkout or override SideSign.
+          git -C work/EmbeddedSideStore/Dependencies/SideSign fetch --unshallow origin
+          git -C work/EmbeddedSideStore/Dependencies/SideSign merge-base --is-ancestor "$SIDESIGN_GSA_FIX" HEAD
+          printf 'sidestore=%s\nminimuxer=%s\nsidesign=%s\ngsa_fix_ancestor=%s\n' \
+            "$EMBEDDED_SIDESTORE_REF" "$MINIMUXER_REF" "$SIDESIGN_REF" "$SIDESIGN_GSA_FIX" \
+            | tee artifacts/logs/upstream-auth-provenance.txt
+          test "$(git -C idevice rev-parse HEAD)" = "$IDEVICE_REF"
+          test "$(git -C jktcp rev-parse HEAD)" = "$JKTCP_REF"
+
+      - name: Select Xcode 26.4
+        uses: maxim-lobanov/setup-xcode@v1.6.0
+        with:
+          xcode-version: "26.4"
+
+      - name: Apply userfix2 headless host refresh patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # 1) Replace the legacy PrivateIntentRunner/AppIntent bridge with the
+          #    already-proven v3 headless service route.
+          p = Path("builder/scripts/patch_livecontainer_autorefresh.py")
+          s = p.read_text(encoding="utf-8")
+          a = s.index("BRIDGE = r'''")
+          b = s.index("\n\n\ndef die", a)
+          bridge = """BRIDGE = r'''
+          // LC_REFRESH_BRIDGE_V2_BEGIN
+          /// v3 userfix3: use the proven headless service and keep refresh
+          /// verification state in the LiveContainer host process.
+          public enum LiveContainerRefreshBridge {
+              private static func defaults() -> UserDefaults {
+                  UserDefaults(suiteName: "group.com.SideStore.SideStore") ?? .standard
+              }
+
+              public static func refreshAllApps() async throws {
+                  guard #available(iOS 17.0, *) else {
+                      throw NSError(domain: "LiveContainerRefresh.UnsupportedOS", code: 17,
+                          userInfo: [NSLocalizedDescriptionKey: "The embedded automatic refresh bridge requires iOS 17 or later."])
+                  }
+                  try Task.checkCancellation()
+                  let store = defaults()
+                  guard let runID = store.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+                        UUID(uuidString: runID) != nil else {
+                      throw CombinedFailure(operation: "refresh", stage: .command,
+                          code: .invalidConfiguration, id: UUID().uuidString, retryable: false)
+                  }
+
+                  let snapshot = try await V3ServiceBridge.shared.request(operation: "snapshot")
+                  guard let rows = snapshot["installedApps"] as? [[String: Any]] else {
+                      throw CombinedFailure(operation: "refresh", stage: .serviceReadiness,
+                          code: .invalidResponse, id: runID)
+                  }
+                  let active = rows.filter { $0["isActive"] as? Bool == true }
+                  guard !active.isEmpty else {
+                      throw CombinedFailure(operation: "refresh", stage: .refreshVerification,
+                          code: .missingResult, id: runID, retryable: false)
+                  }
+                  let ordered = active.sorted { lhs, rhs in
+                      let leftHost = lhs["isHost"] as? Bool ?? false
+                      let rightHost = rhs["isHost"] as? Bool ?? false
+                      if leftHost != rightHost { return !leftHost && rightHost }
+                      return (lhs["bundleID"] as? String ?? "") < (rhs["bundleID"] as? String ?? "")
+                  }
+                  let expected = ordered.compactMap { $0["bundleID"] as? String }
+                  store.set(expected, forKey: "liveContainerAutoRefreshExpectedIDs")
+                  var results: [[String: Any]] = []
+                  persistManifest(runID: runID, expected: expected, results: results)
+
+                  for row in ordered {
+                      try Task.checkCancellation()
+                      if row["isHost"] as? Bool == true {
+                          prepareHostHandoff(row: row, runID: runID)
+                      }
+                      try await refreshOne(row, runID: runID)
+
+                      guard let bundleID = row["bundleID"] as? String else { continue }
+                      var item: [String: Any] = ["bundle_id": bundleID, "success": true]
+                      if let fresh = try? await V3ServiceBridge.shared.request(operation: "snapshot"),
+                         let apps = fresh["installedApps"] as? [[String: Any]],
+                         let updated = apps.first(where: { $0["bundleID"] as? String == bundleID }) {
+                          if let refreshed = updated["refreshedDate"] as? Date { item["refreshed_date"] = refreshed }
+                          if let expiration = updated["expirationDate"] as? Date { item["expiration_date"] = expiration }
+                      }
+                      results.removeAll { $0["bundle_id"] as? String == bundleID }
+                      results.append(item)
+                      persistManifest(runID: runID, expected: expected, results: results)
+                  }
+                  try Task.checkCancellation()
+              }
+
+              private static func persistManifest(runID: String, expected: [String], results: [[String: Any]]) {
+                  defaults().set([
+                      "version": 3,
+                      "schema": "LiveContainerRefreshManifestV3",
+                      "run_id": runID,
+                      "expected_ids": expected,
+                      "results": results,
+                      "date": Date(),
+                      "host_handoff": defaults().bool(forKey: "liveContainerAutoRefreshHostHandoff")
+                  ], forKey: "liveContainerAutoRefreshVerification")
+              }
+
+              private static func prepareHostHandoff(row: [String: Any], runID: String) {
+                  let store = defaults()
+                  store.set(true, forKey: "liveContainerAutoRefreshHostHandoff")
+                  store.set(runID, forKey: "liveContainerAutoRefreshHostHandoffRunID")
+                  store.set(Date(), forKey: "liveContainerAutoRefreshHostHandoffStartedAt")
+                  if let expiration = row["expirationDate"] as? Date {
+                      store.set(expiration, forKey: "liveContainerAutoRefreshHostPreviousExpiration")
+                  }
+                  if let bundleID = row["bundleID"] as? String {
+                      store.set(bundleID, forKey: "liveContainerAutoRefreshHostResultBundleID")
+                  }
+              }
+
+              private static func refreshOne(_ row: [String: Any], runID: String) async throws {
+                  guard let target = row["identifier"] as? String, !target.isEmpty else {
+                      throw CombinedFailure(operation: "refresh", stage: .command,
+                          code: .invalidConfiguration, id: runID)
+                  }
+                  let started = try await V3ServiceBridge.shared.request(
+                      operation: "opStart",
+                      payload: ["kind": "refreshApp", "target": target]
+                  )
+                  guard let session = started["session"] as? String, !session.isEmpty else {
+                      throw CombinedFailure(operation: "refresh", stage: .command,
+                          code: .invalidResponse, id: runID)
+                  }
+                  var reply = started
+                  let deadline = Date().addingTimeInterval(540)
+                  while true {
+                      try Task.checkCancellation()
+                      let state = reply["state"] as? String ?? "working"
+                      switch state {
+                      case "completed":
+                          return
+                      case "waitingForAuthentication":
+                          throw CombinedFailure(operation: "refresh", stage: .authentication,
+                              code: .notReady, id: runID, retryable: false)
+                      case "failed":
+                          let stage = (reply["stage"] as? String).flatMap(CombinedFailure.Stage.init(rawValue:)) ?? .refreshVerification
+                          let code = (reply["code"] as? String).flatMap(CombinedFailure.Code.init(rawValue:)) ?? .failed
+                          throw CombinedFailure(operation: "refresh", stage: stage, code: code, id: runID)
+                      case "cancelled":
+                          throw CombinedFailure(operation: "refresh", stage: .command,
+                              code: .cancelled, id: runID, retryable: false)
+                      case "awaitingPrompt", "requiresSource":
+                          throw CombinedFailure(operation: "refresh", stage: .command,
+                              code: .unsupported, id: runID, retryable: false)
+                      default:
+                          break
+                      }
+                      guard Date() < deadline else {
+                          throw CombinedFailure(operation: "refresh", stage: .command,
+                              code: .timedOut, id: runID, retryable: true)
+                      }
+                      try await Task.sleep(nanoseconds: 250_000_000)
+                      reply = try await V3ServiceBridge.shared.request(operation: "opPoll", target: session)
+                  }
+              }
+          }
+          // LC_REFRESH_BRIDGE_V2_END
+          '''"""
+          s = s[:a] + bridge + s[b:]
+          p.write_text(s, encoding="utf-8")
+
+          # 2) Let refreshApp handle the LiveContainer host and emit the same
+          #    verification/host-handoff state the scheduler already knows how to verify.
+          p = Path("builder/scripts/templates/v3_headless_runtime.swift")
+          s = p.read_text(encoding="utf-8")
+          guard = '            guard app.isActive, app.bundleIdentifier != StoreApp.altstoreAppID else { throw V3SideStoreServiceError.unsupported }\n'
+          if guard not in s:
+              raise SystemExit("userfix2 host guard anchor not found")
+          s = s.replace(guard, '            guard app.isActive else { throw V3SideStoreServiceError.unsupported }\n', 1)
+
+          anchor = '''    private struct V3OpDriver: @unchecked Sendable {
+          '''
+          helper = r'''    private func persistRefreshResult(app: InstalledApp, result: Result<InstalledApp, Error>) {
+              guard let defaults = UserDefaults(suiteName: "group.com.SideStore.SideStore"),
+                    let runID = defaults.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+                    UUID(uuidString: runID) != nil else { return }
+              let expected = defaults.stringArray(forKey: "liveContainerAutoRefreshExpectedIDs") ?? [app.bundleIdentifier]
+              var entries: [[String: Any]] = []
+              if let existing = defaults.dictionary(forKey: "liveContainerAutoRefreshVerification"),
+                 existing["run_id"] as? String == runID {
+                  entries = existing["results"] as? [[String: Any]] ?? []
+              }
+              entries.removeAll { $0["bundle_id"] as? String == app.bundleIdentifier }
+              var item: [String: Any] = ["bundle_id": app.bundleIdentifier]
+              switch result {
+              case .success(let refreshed):
+                  item["success"] = true
+                  item["refreshed_date"] = refreshed.refreshedDate
+                  item["expiration_date"] = refreshed.expirationDate
+              case .failure(let error):
+                  let failure = CombinedFailure.capture(error, operation: "refresh",
+                                                        stage: .refreshVerification, id: runID)
+                  item["success"] = false
+                  item["error_code"] = failure.underlyingCode
+                  item["error_domain"] = failure.underlyingDomain
+                  item["failure"] = failure.wire
+              }
+              entries.append(item)
+              let order = Dictionary(uniqueKeysWithValues: expected.enumerated().map { ($0.element, $0.offset) })
+              entries.sort { (order[$0["bundle_id"] as? String ?? ""] ?? Int.max) <
+                             (order[$1["bundle_id"] as? String ?? ""] ?? Int.max) }
+              defaults.set([
+                  "version": 2,
+                  "schema": "LiveContainerRefreshManifestV2",
+                  "run_id": runID,
+                  "expected_ids": expected,
+                  "results": entries,
+                  "date": Date(),
+                  "host_handoff": defaults.bool(forKey: "liveContainerAutoRefreshHostHandoff")
+              ], forKey: "liveContainerAutoRefreshVerification")
+          }
+
+          private func prepareHostHandoffIfNeeded(_ app: InstalledApp) {
+              guard app.bundleIdentifier == StoreApp.altstoreAppID,
+                    let defaults = UserDefaults(suiteName: "group.com.SideStore.SideStore"),
+                    let runID = defaults.string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+                    UUID(uuidString: runID) != nil else { return }
+              defaults.set(true, forKey: "liveContainerAutoRefreshHostHandoff")
+              defaults.set(runID, forKey: "liveContainerAutoRefreshHostHandoffRunID")
+              defaults.set(Date(), forKey: "liveContainerAutoRefreshHostHandoffStartedAt")
+              defaults.set(app.expirationDate, forKey: "liveContainerAutoRefreshHostPreviousExpiration")
+          }
+
+          '''
+          if anchor not in s:
+              raise SystemExit("userfix2 helper anchor not found")
+          s = s.replace(anchor, helper + anchor, 1)
+
+          old = '''            return V3OpDriver(kind: kind) {
+                          let group = RefreshGroup(context: baseContext)
+          '''
+          new = '''            return V3OpDriver(kind: kind) {
+                          self.prepareHostHandoffIfNeeded(app)
+                          let group = RefreshGroup(context: baseContext)
+          '''
+          if old not in s:
+              raise SystemExit("userfix2 refresh closure anchor not found")
+          s = s.replace(old, new, 1)
+
+          result_anchor = '                        if case .failure(let error) = result {\n'
+          if result_anchor not in s:
+              raise SystemExit("userfix2 result anchor not found")
+          s = s.replace(result_anchor,
+              '                        self.persistRefreshResult(app: app, result: result)\n' + result_anchor, 1)
+
+          p.write_text(s, encoding="utf-8")
+
+          # 3) If refreshing the host replaces/kills the foreground process before
+          #    the command can return, relaunch verification converts the proven
+          #    installed-profile advance into the missing host result.
+          p = Path("builder/scripts/templates/livecontainer_refresh_scheduler.swift")
+          s = p.read_text(encoding="utf-8")
+          old = '''            defaults.set(true, forKey: hostVerifiedKey)
+                      defaults.removeObject(forKey: hostHandoffKey)
+                      print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED evidence=installed_profile_expiration_advanced")
+                      let batch = verifyRefreshManifest(runID: runID)
+          '''
+          new = '''            defaults.set(true, forKey: hostVerifiedKey)
+                      if var manifest = defaults.dictionary(forKey: verificationKey),
+                         manifest["run_id"] as? String == runID,
+                         let hostBundleID = defaults.string(forKey: "liveContainerAutoRefreshHostResultBundleID") {
+                          var results = manifest["results"] as? [[String: Any]] ?? []
+                          results.removeAll { $0["bundle_id"] as? String == hostBundleID }
+                          results.append(["bundle_id": hostBundleID, "success": true,
+                                          "expiration_date": current.expiration, "refreshed_date": Date()])
+                          manifest["results"] = results
+                          manifest["date"] = Date()
+                          defaults.set(manifest, forKey: verificationKey)
+                      }
+                      defaults.removeObject(forKey: hostHandoffKey)
+                      defaults.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")
+                      print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED evidence=installed_profile_expiration_advanced")
+                      let batch = verifyRefreshManifest(runID: runID)
+          '''
+          if old not in s:
+              raise SystemExit("userfix3 scheduler host-verification anchor not found")
+          s = s.replace(old, new, 1)
+
+          # 4) Host reinstallation can reuse the same provisioning expiration
+          #    during rapid retests. Verify replacement by any authoritative
+          #    installed-host identity change: expiration, profile UUID, or
+          #    application bundle container path.
+          baseline_anchor = '"uuid": profile.uuid, "expiration": profile.expiration], forKey: hostBaselineKey)'
+          if baseline_anchor not in s:
+              raise SystemExit("userfix4 host baseline anchor not found")
+          s = s.replace(
+              baseline_anchor,
+              '"uuid": profile.uuid, "expiration": profile.expiration, "bundle_path": bundle.bundleURL.path], forKey: hostBaselineKey)',
+              1
+          )
+
+          verify_old = '''            guard current.expiration > previous, current.expiration > Date() else {
+                          defaults.set("HOST_REFRESH_AWAITING_RELAUNCH", forKey: healthStateKey)
+                          defaults.set("installed_host_expiration_not_advanced", forKey: lastErrorKey)
+                          print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_UNVERIFIED reason=installed_profile_expiration_not_advanced")
+          '''
+          verify_new = '''            let previousUUID = baseline["uuid"] as? String ?? ""
+                      let previousPath = baseline["bundle_path"] as? String ?? ""
+                      let expirationAdvanced = current.expiration > previous
+                      let profileChanged = !previousUUID.isEmpty && current.uuid != previousUUID
+                      let bundleReplaced = !previousPath.isEmpty && bundle.bundleURL.path != previousPath
+                      guard current.expiration > Date(), expirationAdvanced || profileChanged || bundleReplaced else {
+                          defaults.set("HOST_REFRESH_AWAITING_RELAUNCH", forKey: healthStateKey)
+                          defaults.set("installed_host_identity_not_advanced", forKey: lastErrorKey)
+                          print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_UNVERIFIED reason=installed_host_identity_not_advanced")
+          '''
+          if verify_old not in s:
+              raise SystemExit("userfix4 host identity anchor not found")
+          s = s.replace(verify_old, verify_new, 1)
+
+          # Use evidence-specific logging instead of claiming only expiry moved.
+          s = s.replace(
+              'print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED evidence=installed_profile_expiration_advanced")',
+              'print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED expiration_advanced=\\(expirationAdvanced) profile_uuid_changed=\\(profileChanged) bundle_path_changed=\\(bundleReplaced)")',
+              1
+          )
+
+          # 5) Stamp each self-refresh with the current scheduler run ID inside
+          #    the resigned/signed app bundle. On relaunch this is definitive proof
+          #    that the host installed the bundle produced by this exact refresh run,
+          #    even when the provisioning profile UUID/expiry and container path are reused.
+          rp = Path("work/EmbeddedSideStore/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift")
+          rs = rp.read_text(encoding="utf-8")
+          stamp_anchor = '            additionalValues[Bundle.Info.serverID] = UserDefaults.standard.preferredServerID\n'
+          stamp_repl = '''            additionalValues[Bundle.Info.serverID] = UserDefaults.standard.preferredServerID
+                      if let runID = UserDefaults(suiteName: "group.com.SideStore.SideStore")?
+                          .string(forKey: "liveContainerAutoRefreshExpectedRunID"),
+                         UUID(uuidString: runID) != nil {
+                          additionalValues["LCRefreshRunID"] = runID
+                      }
+          '''
+          if stamp_anchor not in rs:
+              raise SystemExit("userfix5 resign stamp anchor not found")
+          rp.write_text(rs.replace(stamp_anchor, stamp_repl, 1), encoding="utf-8")
+
+          marker_old = '''            let previousUUID = baseline["uuid"] as? String ?? ""
+                      let previousPath = baseline["bundle_path"] as? String ?? ""
+                      let expirationAdvanced = current.expiration > previous
+                      let profileChanged = !previousUUID.isEmpty && current.uuid != previousUUID
+                      let bundleReplaced = !previousPath.isEmpty && bundle.bundleURL.path != previousPath
+                      guard current.expiration > Date(), expirationAdvanced || profileChanged || bundleReplaced else {
+          '''
+          marker_new = '''            let previousUUID = baseline["uuid"] as? String ?? ""
+                      let previousPath = baseline["bundle_path"] as? String ?? ""
+                      let expirationAdvanced = current.expiration > previous
+                      let profileChanged = !previousUUID.isEmpty && current.uuid != previousUUID
+                      let bundleReplaced = !previousPath.isEmpty && bundle.bundleURL.path != previousPath
+                      let runMarkerMatched = (bundle.object(forInfoDictionaryKey: "LCRefreshRunID") as? String) == runID
+                      guard current.expiration > Date(), runMarkerMatched || expirationAdvanced || profileChanged || bundleReplaced else {
+          '''
+          if marker_old not in s:
+              raise SystemExit("userfix5 marker verification anchor not found")
+          s = s.replace(marker_old, marker_new, 1)
+          s = s.replace(
+              'print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED expiration_advanced=\\(expirationAdvanced) profile_uuid_changed=\\(profileChanged) bundle_path_changed=\\(bundleReplaced)")',
+              'print("[LIVE_CONTAINER_REFRESH] HOST_REFRESH_VERIFIED run_marker=\\(runMarkerMatched) expiration_advanced=\\(expirationAdvanced) profile_uuid_changed=\\(profileChanged) bundle_path_changed=\\(bundleReplaced)")',
+              1
+          )
+
+          p.write_text(s, encoding="utf-8")
+
+          print("userfix5 builder patch applied")
+          # 6) The current SideStore .refresh pipeline updates provisioning
+          #    profiles in-place. It does not self-reinstall the host.
+          p = Path("builder/scripts/patch_livecontainer_autorefresh.py")
+          s = p.read_text(encoding="utf-8")
+          if 'prepareHostHandoff(row: row, runID: runID)' not in s:
+              raise SystemExit("userfix6 host-handoff call anchor not found")
+          s = s.replace('prepareHostHandoff(row: row, runID: runID)',
+                        '// userfix6: .refresh is in-place; no host handoff', 1)
+          s = s.replace(
+              '"host_handoff": defaults().bool(forKey: "liveContainerAutoRefreshHostHandoff")',
+              '"host_handoff": false',
+              1
+          )
+          anchor = 'let store = defaults()'
+          repl = 'let store = defaults()\n                  store.set(false, forKey: "liveContainerAutoRefreshHostHandoff")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffRunID")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostHandoffStartedAt")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostPreviousExpiration")\n                  store.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")'
+          if anchor not in s:
+              raise SystemExit("userfix6 bridge cleanup anchor not found")
+          s = s.replace(anchor, repl, 1)
+          p.write_text(s, encoding="utf-8")
+
+          p = Path("builder/scripts/templates/v3_headless_runtime.swift")
+          s = p.read_text(encoding="utf-8")
+          s = s.replace('                    self.prepareHostHandoffIfNeeded(app)\n', '', 1)
+          p.write_text(s, encoding="utf-8")
+
+          p = Path("builder/scripts/templates/livecontainer_refresh_scheduler.swift")
+          s = p.read_text(encoding="utf-8")
+          anchor = '        hostBundle = Bundle.main\n'
+          repl = '        hostBundle = Bundle.main\n        defaults.set(false, forKey: hostHandoffKey)\n        defaults.removeObject(forKey: hostHandoffRunKey)\n        defaults.removeObject(forKey: hostHandoffStartedKey)\n        defaults.removeObject(forKey: hostPreviousExpirationKey)\n        defaults.removeObject(forKey: "liveContainerAutoRefreshHostResultBundleID")\n        if defaults.string(forKey: healthStateKey)?.hasPrefix("HOST_REFRESH_") == true {\n            defaults.set("IDLE", forKey: healthStateKey)\n            defaults.removeObject(forKey: lastErrorKey)\n        }\n'
+          if anchor not in s:
+              raise SystemExit("userfix6 scheduler register anchor not found")
+          s = s.replace(anchor, repl, 1)
+          p.write_text(s, encoding="utf-8")
+
+          print("userfix6 in-place host refresh patch applied")
+          PY
+
+          grep -Fq 'v3 userfix3: use the proven headless service' builder/scripts/patch_livecontainer_autorefresh.py
+          grep -Fq 'prepareHostHandoffIfNeeded' builder/scripts/templates/v3_headless_runtime.swift
+          grep -Fq 'LCRefreshRunID' work/EmbeddedSideStore/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift
+          grep -Fq 'runMarkerMatched' builder/scripts/templates/livecontainer_refresh_scheduler.swift
+          grep -Fq '"host_handoff": false' builder/scripts/patch_livecontainer_autorefresh.py
+          grep -Fq 'defaults.set(false, forKey: hostHandoffKey)' builder/scripts/templates/livecontainer_refresh_scheduler.swift
+
+      - name: Apply userfix8 UI, localization, and shared IPA handoff fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 userfix-repo/tools/lcss_userfix7.py
+          grep -Fq 'liveContainerAutoRefreshProgress' builder/scripts/patch_livecontainer_autorefresh.py
+          grep -Fq 'Staged IPA URL is invalid.' builder/scripts/templates/v3_headless_runtime.swift
+          grep -Fq 'V3SharedIPAInbox' builder/scripts/templates/v3_unified_shell.swift
+          grep -Fq '安裝／側載 IPA' builder/scripts/templates/v3_unified_shell.swift
+          grep -Fq '排程刷新' builder/scripts/templates/livecontainer_refresh_settings.swift
+
+      - name: Apply and verify host integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            python3 builder/scripts/patch_livecontainer_autorefresh.py work/LiveContainer
+            python3 builder/scripts/patch_livecontainer_autorefresh.py work/LiveContainer
+            python3 builder/scripts/patch_embedded_sidestore_startup.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_embedded_sidestore_startup.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_guest_return.py work/LiveContainer
+            python3 builder/scripts/patch_guest_return.py work/LiveContainer
+            python3 builder/scripts/patch_app_layout.py --v3-grid work/LiveContainer
+            python3 builder/scripts/patch_app_layout.py --v3-grid work/LiveContainer
+            python3 builder/scripts/patch_v3_unified_shell.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_v3_unified_shell.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_v3_service.py work/LiveContainer work/EmbeddedSideStore
+            python3 builder/scripts/patch_v3_service.py work/LiveContainer work/EmbeddedSideStore
+            swiftc -frontend -parse work/LiveContainer/MultitaskSupport/MultitaskAppWindow.swift
+            swiftc -frontend -parse work/LiveContainer/MultitaskSupport/MultitaskDockView.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Models/AppLayoutStyle.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/AppList/LCGridAppCell.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+            python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("background_patch", "builder/scripts/patch_background_automation.py")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          module.patch_background_operation(Path("work/EmbeddedSideStore"))
+          module.patch_console_log(Path("work/EmbeddedSideStore"))
+          PY
+            python3 builder/scripts/patch_combined_refresh_contract.py work/EmbeddedSideStore
+            python3 builder/scripts/patch_combined_refresh_contract.py work/EmbeddedSideStore
+            python3 builder/scripts/patch_combined_service_startup.py work/LiveContainer work/EmbeddedSideStore v3
+            python3 builder/scripts/patch_combined_service_startup.py work/LiveContainer work/EmbeddedSideStore v3
+            python3 userfix-repo/tools/lcss_waze_direct.py work/LiveContainer
+            grep -Fq 'LC_UBER_WAZE_DIRECT_V1' work/LiveContainer/TweakLoader/UIKit+GuestHooks.m
+            grep -Fq 'LC_UBER_WAZE_DIRECT_V1' work/LiveContainer/LiveContainerSwiftUI/Views/LCTabView.swift
+            grep -Fq '<string>waze</string>' work/LiveContainer/LiveContainer/Info.plist
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/LCTabView.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/App/AppDelegate.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/App/LiveContainerAutoRefreshAlarm.swift
+            swiftc -frontend -parse work/LiveContainer/LiveContainerSwiftUI/Views/Settings/LCEmbeddedSideStoreRefreshView.swift
+            swiftc -frontend -parse work/LiveContainer/SideStoreSupport/SideStore.swift
+            swiftc -frontend -parse work/EmbeddedSideStore/SideStore/Core/Operations/StandaloneOperations/BackgroundRefreshAppsOperation.swift
+            swiftc -frontend -parse work/EmbeddedSideStore/SideStore/Utils/iostreams/ConsoleLog.swift
+            swiftc -frontend -parse work/EmbeddedSideStore/AltStore/AppDelegate.swift
+            swiftc -frontend -parse work/EmbeddedSideStore/AltStore/Core/Model/DatabaseManager/DatabaseManager.swift
+            plutil -lint work/LiveContainer/LiveContainer/Info.plist
+            plutil -extract BGTaskSchedulerPermittedIdentifiers.0 raw work/LiveContainer/LiveContainer/Info.plist
+            grep -Fq 'LIVE_REFRESH_LOG_RETENTION_V1' work/EmbeddedSideStore/SideStore/Utils/iostreams/ConsoleLog.swift
+          } 2>&1 | tee artifacts/logs/host-preflight.log
+
+      - name: Build unified host before transport compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project work/LiveContainer/LiveContainer.xcodeproj \
+            -scheme LiveContainer -sdk iphoneos -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/livecontainer-derived-data" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee artifacts/logs/livecontainer-build.log
+
+      - name: Download proven NO-WIDGET base IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: LiveContainer-SideStore-AutoRefresh-IPA
+          path: base-artifact
+          repository: y7004634-byte/PiliNara-PiP
+          run-id: 36286470277
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Overlay rebuilt V3 framework onto proven IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/livecontainer-derived-data/Build/Products/Release-iphoneos/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework"
+          test -f "$SRC/LiveContainerSwiftUI"
+          grep -Fq 'LC_UBER_WAZE_V3_DIRECT_V1' work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+          grep -Fq 'target.scheme = "door581"' work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+          grep -Fq 'url.scheme?.lowercased() == "waze"' work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift
+
+          mkdir -p out/base
+          cp base-artifact/LiveContainer-SideStore-AutoRefresh.ipa out/base.ipa
+          cd out/base
+          unzip -q ../base.ipa
+          rm -rf Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework
+          cp -R "$SRC" Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework
+          rm -rf Payload/LiveContainer.app/_CodeSignature
+          zip -qry ../LCSS-v3.0.1-userfix8-WAZE-DIRECT-V3-NO-WIDGET.ipa Payload
+          cd ../..
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, plistlib, zipfile
+          ipa=Path("out/LCSS-v3.0.1-userfix8-WAZE-DIRECT-V3-NO-WIDGET.ipa")
+          with zipfile.ZipFile(ipa) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              info=plistlib.loads(z.read("Payload/LiveContainer.app/Info.plist"))
+              schemes=[s for t in info.get("CFBundleURLTypes",[]) for s in t.get("CFBundleURLSchemes",[])]
+              assert schemes and schemes[0] == "livecontainer", schemes
+              assert "waze" in [s.lower() for s in schemes], schemes
+              assert not any("LiveWidgetExtension.appex/" in n for n in names)
+              appex=[n for n in names if n.endswith(".appex/Info.plist")]
+              assert len(appex)==3, appex
+              tweak=z.read("Payload/LiveContainer.app/Frameworks/TweakLoader.dylib")
+              assert b"door581" in tweak and b"waze" in tweak
+              fw=z.read("Payload/LiveContainer.app/Frameworks/LiveContainerSwiftUI.framework/LiveContainerSwiftUI")
+              assert len(fw)>100000
+          sha=hashlib.sha256(ipa.read_bytes()).hexdigest()
+          src=Path("work/LiveContainer/LiveContainerSwiftUI/Views/V3UnifiedShell.swift")
+          src_sha=hashlib.sha256(src.read_bytes()).hexdigest()
+          Path("out/VERIFY.txt").write_text(
+              "Base IPA full CI: PASS (run 36286470277)\n"
+              "Host rebuild: PASS\n"
+              "V3 waze direct source marker: PASS\n"
+              "waze URL scheme: PASS\n"
+              "TweakLoader fallback waze/door581: PASS\n"
+              "LiveWidgetExtension absent: PASS\n"
+              "Remaining app extensions: 3\n"
+              f"V3UnifiedShell SHA256: {src_sha}\n"
+              f"IPA SHA256: {sha}\n",
+              encoding="utf-8"
+          )
+          print("IPA_SHA256="+sha)
+          print("V3_SOURCE_SHA256="+src_sha)
+          PY
+
+      - name: Upload V3 hotfix IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LCSS-WAZE-DIRECT-V3-NO-WIDGET
+          path: |
+            out/LCSS-v3.0.1-userfix8-WAZE-DIRECT-V3-NO-WIDGET.ipa
+            out/VERIFY.txt
+            artifacts/logs/host-preflight.log
+            artifacts/logs/livecontainer-build.log
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
