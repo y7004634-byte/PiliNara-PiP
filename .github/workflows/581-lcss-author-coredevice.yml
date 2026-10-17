@@ -1,0 +1,180 @@
+name: 581 LC+SS Author CoreDevice Restoration Canary
+
+on:
+  push:
+    branches: [research/581-lcss-author-coredevice-20261018]
+    paths: [.github/workflows/581-lcss-author-coredevice.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: 581-lcss-author-coredevice-canary
+  cancel-in-progress: true
+
+jobs:
+  native-author-fork-coredevice:
+    runs-on: macos-26
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@v1.6.0
+        with:
+          xcode-version: "26.4"
+      - name: Clone and verify exact author SideStore dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work artifacts/logs
+          git clone --quiet https://github.com/raj-sh-git/SideStore.git work/SideStore
+          git -C work/SideStore checkout --quiet --detach 3990d5fbcf5cbabb8de6de1727248629978e52f1
+          git -C work/SideStore submodule update --init --recursive
+          test "$(git -C work/SideStore rev-parse HEAD)" = 3990d5fbcf5cbabb8de6de1727248629978e52f1
+          test "$(git -C work/SideStore/Dependencies/SideSign rev-parse HEAD)" = f4e8df8bd979cba11ddf7c4898e2a5d03ae00dab
+          test "$(git -C work/SideStore/Dependencies/minimuxer rev-parse HEAD)" = 12be70dc2627307a16bfd2dc7a009080d5bec909
+      - name: Apply only typed FetchUDID TLS-port recovery patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 builder/tools/581_lcss_fork_tls_autoretry.py \
+            --repo work/SideStore --check-only --receipt artifacts/logs/transport-dryrun.json
+          python3 builder/tools/581_lcss_fork_tls_autoretry.py \
+            --repo work/SideStore --receipt artifacts/logs/transport-applied.json
+          git -C work/SideStore diff --check
+          test "$(git -C work/SideStore diff --name-only)" = "SideStore/Core/DeviceApi/MinimuxerWrapper.swift"
+          git -C work/SideStore diff --exit-code -- \
+            SideStore/Core/Auth SideStore/Core/Anisette \
+            SideStore/Core/Operations/StandaloneOperations/SignInOperation.swift \
+            Dependencies/SideSign Dependencies/minimuxer
+          swiftc -frontend -parse work/SideStore/SideStore/Core/DeviceApi/MinimuxerWrapper.swift
+          git -C work/SideStore diff -- SideStore/Core/DeviceApi/MinimuxerWrapper.swift > artifacts/logs/transport-only.patch
+            artifacts/logs/coredevice-bridge-only.patch
+            artifacts/logs/coredevice-source-applied.json
+      - name: Source-test modern Lockdown CoreDevice RSD bridge (no Apple auth changes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          m=work/SideStore/Dependencies/minimuxer
+          python3 builder/tools/581_lcss_coredevice_modern_port.py \
+            --repo "$m" --check-only --report artifacts/logs/coredevice-source-dryrun.json
+          python3 builder/tools/581_lcss_coredevice_modern_port.py \
+            --repo "$m" --report artifacts/logs/coredevice-source-applied.json
+          git -C "$m" diff --check
+          test "$(git -C "$m" diff --name-only)" = "DeviceGateway/idevice/IdeviceGateway.swift"
+          swiftc -frontend -parse "$m/DeviceGateway/idevice/IdeviceGateway.swift"
+          grep -Fq 'COREDVICE_RESTORATION_581_V1' "$m/DeviceGateway/idevice/IdeviceGateway.swift"
+          grep -Fq 'tunnel_create_usb(provider, &adapter, &handshake)' "$m/DeviceGateway/idevice/IdeviceGateway.swift"
+          grep -Fq 'if pairingFileType == .rppairing || usesCoreDevice' "$m/DeviceGateway/idevice/IdeviceGateway.swift"
+          git -C "$m" diff -- DeviceGateway/idevice/IdeviceGateway.swift > artifacts/logs/coredevice-bridge-only.patch
+          # The user's already-working author Apple sign-in/Anisette/SideSign
+          # must not be patched, and pairing records stay unchanged.
+          git -C work/SideStore diff --exit-code -- \
+            SideStore/Core/Auth SideStore/Core/Anisette \
+            SideStore/Core/Operations/StandaloneOperations/SignInOperation.swift \
+            SideStore/Core/Pairing Dependencies/SideSign
+          git -C "$m" diff --exit-code -- \
+            Common DeviceGateway/Package.swift Sources
+
+      - name: Build author SideStore natively without Apple account access
+        shell: bash
+        working-directory: work/SideStore
+        run: |
+          set -euo pipefail
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install ldid xcbeautify
+          python3 scripts/ci/workflow.py set-marketing-version '0.7.0-20261015.6+3990d5fb'
+          python3 scripts/ci/workflow.py build \
+            2>&1 | tee "$GITHUB_WORKSPACE/artifacts/logs/sidestore-build.log"
+          test -s SideStore.ipa
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile, plistlib
+          with zipfile.ZipFile("SideStore.ipa") as z:
+              assert z.testzip() is None
+              plists=[x for x in z.namelist() if x=="Payload/SideStore.app/Info.plist"]
+              assert len(plists)==1,plists
+              info=plistlib.loads(z.read(plists[0]))
+              assert info["CFBundleIdentifier"]=="com.SideStore.SideStore"
+          PY
+      - name: Clone exact author LiveContainer shell and adapt only local IPA source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet https://github.com/raj-sh-git/LiveContainer.git work/LiveContainer
+          git -C work/LiveContainer checkout --quiet --detach 0ad69dd96b7e0e918eae0db94aff8aabb4a32ec9
+          git -C work/LiveContainer submodule update --init --recursive
+          test "$(git -C work/LiveContainer rev-parse HEAD)" = 0ad69dd96b7e0e918eae0db94aff8aabb4a32ec9
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("work/LiveContainer/.github/build_github.sh")
+          original=p.read_text()
+          old="wget https://github.com/raj-sh-git/SideStore/releases/download/nightly/SideStore.ipa"
+          new='cp "$GITHUB_WORKSPACE/work/SideStore/SideStore.ipa" SideStore.ipa'
+          assert original.count(old)==1,"Unrecognized author packaging version"
+          p.write_text(original.replace(old,new,1))
+          PY
+          test "$(git -C work/LiveContainer diff --name-only)" = ".github/build_github.sh"
+          git -C work/LiveContainer diff --check
+      - name: Native-build author LiveContainer host and embed our compiled SideStore
+        shell: bash
+        working-directory: work/LiveContainer
+        env:
+          archive_path: archive
+          scheme: LiveContainer
+        run: |
+          set -euo pipefail
+          xcodebuild archive -archivePath archive.xcarchive \
+            -scheme LiveContainer -project LiveContainer.xcodeproj \
+            -sdk iphoneos -arch arm64 -configuration Release \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee "$GITHUB_WORKSPACE/artifacts/logs/lc-build.log"
+          test -d archive.xcarchive/Products/Applications/LiveContainer.app
+          sh .github/build_github.sh 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/logs/lcss-packaging.log"
+          test -s LiveContainer+SideStore.ipa
+      - name: Offline verify no Waze registration, no Widget and native CoreDevice bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 builder/tools/581_lcss_fork_transport_package_check.py \
+            work/LiveContainer/LiveContainer+SideStore.ipa \
+            artifacts/LCSS-Author-CoreDevice-RSD-NoWidget-UNSIGNED.ipa \
+            artifacts/transport-verification.json
+      - name: Independently check embedded native CoreDevice bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          p=Path("artifacts/LCSS-Author-CoreDevice-RSD-NoWidget-UNSIGNED.ipa")
+          with zipfile.ZipFile(p) as z:
+              exe=z.read("Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore")
+              assert b"[581_COREDEVICE]" in exe, "CoreDevice code missing from actual embedded SideStore"
+              assert b"tunnel_create_usb" in exe, "USB CoreDevice symbol not linked"
+              assert z.testzip() is None
+          print("COREDEVICE_SOURCE_COMPILED_AND_PACKAGED; DEVICE_ACCEPTANCE_UNTESTED")
+          PY
+
+      - name: Upload unsigned transport canary and source receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: 581-LCSS-Author-CoreDevice-RSD-Unsigned-IPA
+          path: |
+            artifacts/LCSS-Author-CoreDevice-RSD-NoWidget-UNSIGNED.ipa
+            artifacts/transport-verification.json
+            artifacts/logs/transport-applied.json
+            artifacts/logs/transport-only.patch
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - name: Keep native build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 581-LCSS-CoreDevice-Native-Build-Logs
+          path: artifacts/logs
+          if-no-files-found: warn
+          retention-days: 7
