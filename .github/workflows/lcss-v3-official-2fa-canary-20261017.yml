@@ -532,7 +532,7 @@ jobs:
           test "$(git -C "$sign" diff --name-only)" = "Sources/DeveloperPortal/Authentication.swift"
           grep -Fq 'pushedCode' "$sign/Sources/DeveloperPortal/Authentication.swift"
           sha256sum artifacts/logs/host-auth-feedback.patch artifacts/logs/official-2fa-merged-pr5.patch > artifacts/logs/auth-source-patch-sha256.txt
-          python3 builder/tests/test_v3_auth_feedback.py
+          python3 -m unittest discover -s builder/tests -p 'test_v3*.py' -q
           swiftc -frontend -parse builder/scripts/templates/v3_headless_runtime.swift
           swiftc -frontend -parse builder/scripts/templates/v3_unified_shell.swift
 
