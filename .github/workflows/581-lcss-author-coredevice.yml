@@ -1,4 +1,4 @@
-name: 581 LC+SS Author CoreDevice Restoration Canary
+name: 581 LC+SS Author CoreDevice Auto-Lockdown Final Canary
 
 on:
   push:
@@ -77,6 +77,26 @@ jobs:
           git -C "$m" diff --exit-code -- \
             Common DeviceGateway/Package.swift Sources
 
+      - name: Auto-select only validated existing Lockdown CoreDevice pairing on iOS 26.4+
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 builder/tools/581_lcss_autoroute_lockdown_boot.py \
+            --repo work/SideStore
+          python3 builder/tools/581_lcss_autoroute_lockdown_boot.py \
+            --repo work/SideStore --write
+          swiftc -frontend -parse work/SideStore/SideStore/AppBootManager.swift
+          git -C work/SideStore diff --check
+          expected=$(printf 'SideStore/AppBootManager.swift\nSideStore/Core/DeviceApi/MinimuxerWrapper.swift')
+          test "$(git -C work/SideStore diff --name-only)" = "$expected"
+          grep -Fq 'selected existing valid Lockdown record' work/SideStore/SideStore/AppBootManager.swift
+          grep -Fq 'PairingFileManager.shared.preferredProtocol = .lockdown' work/SideStore/SideStore/AppBootManager.swift
+          git -C work/SideStore diff --exit-code -- \
+            SideStore/Core/Auth SideStore/Core/Anisette \
+            SideStore/Core/Operations/StandaloneOperations/SignInOperation.swift \
+            Dependencies/SideSign
+          git -C work/SideStore diff -- SideStore/AppBootManager.swift > artifacts/logs/auto-lockdown-select.patch
+
       - name: Build author SideStore natively without Apple account access
         shell: bash
         working-directory: work/SideStore
@@ -138,7 +158,7 @@ jobs:
           set -euo pipefail
           python3 builder/tools/581_lcss_fork_transport_package_check.py \
             work/LiveContainer/LiveContainer+SideStore.ipa \
-            artifacts/LCSS-Author-CoreDevice-RSD-NoWidget-UNSIGNED.ipa \
+            artifacts/LCSS-Author-CoreDevice-AutoLockdown-NoWidget-UNSIGNED.ipa \
             artifacts/transport-verification.json
       - name: Independently check embedded native CoreDevice bridge
         shell: bash
@@ -147,11 +167,11 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import zipfile
-          p=Path("artifacts/LCSS-Author-CoreDevice-RSD-NoWidget-UNSIGNED.ipa")
+          p=Path("artifacts/LCSS-Author-CoreDevice-AutoLockdown-NoWidget-UNSIGNED.ipa")
           with zipfile.ZipFile(p) as z:
               exe=z.read("Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore")
               assert b"[581_COREDEVICE]" in exe, "CoreDevice code missing from actual embedded SideStore"
-              assert b"tunnel_create_usb" in exe, "USB CoreDevice symbol not linked"
+              assert b"selected existing valid Lockdown record" in exe, "Auto-Lockdown boot select not embedded"
               assert z.testzip() is None
           print("COREDEVICE_SOURCE_COMPILED_AND_PACKAGED; DEVICE_ACCEPTANCE_UNTESTED")
           PY
@@ -159,9 +179,9 @@ jobs:
       - name: Upload unsigned transport canary and source receipt
         uses: actions/upload-artifact@v4
         with:
-          name: 581-LCSS-Author-CoreDevice-RSD-Unsigned-IPA
+          name: 581-LCSS-Author-CoreDevice-AutoLockdown-Unsigned-IPA
           path: |
-            artifacts/LCSS-Author-CoreDevice-RSD-NoWidget-UNSIGNED.ipa
+            artifacts/LCSS-Author-CoreDevice-AutoLockdown-NoWidget-UNSIGNED.ipa
             artifacts/transport-verification.json
             artifacts/logs/transport-applied.json
             artifacts/logs/transport-only.patch
@@ -172,7 +192,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: 581-LCSS-CoreDevice-Native-Build-Logs
+          name: 581-LCSS-AutoLockdown-Native-Build-Logs
           path: artifacts/logs
           if-no-files-found: warn
           retention-days: 7
