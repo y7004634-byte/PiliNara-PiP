@@ -1,5 +1,5 @@
 diff --git a/scripts/templates/v3_headless_runtime.swift b/scripts/templates/v3_headless_runtime.swift
-index b24cd71..2569729 100644
+index b24cd71..becc251 100644
 --- a/scripts/templates/v3_headless_runtime.swift
 +++ b/scripts/templates/v3_headless_runtime.swift
 @@ -64,6 +64,8 @@ final class V3AuthCenter {
@@ -68,8 +68,18 @@ index b24cd71..2569729 100644
  
      func resolveTeam(_ teams: [ALTTeam]) async throws -> ALTTeam {
          let answer = try await ask(kind: "team", title: "Select Team", message: "Choose the development team used for signing.",
+@@ -922,7 +951,8 @@ enum V3BackendCommands {
+         "isBackgroundRefreshEnabled", "keepSigningCertsAfterLogout", "keepAnisetteDataAfterLogout",
+         "keepAnisetteHeadersAfterLogout", "keepSideSignHeadersAfterLogout"]
+     static let stringSettings: Set<String> = ["textInputSideJITServerurl", "menuAnisetteURL", "menuAnisetteList",
+-        "betaUdpatesTrack", "minimuxerGatewayBackend", "textInputAnisetteURL"]
++        "betaUdpatesTrack", "minimuxerGatewayBackend", "textInputAnisetteURL",
++        "customAnisetteClientInfo", "customAnisetteUserAgent"]
+     static let intSettings: Set<String> = ["remotePairingPortOverride", "deviceProbeTimeoutOverride"]
+ 
+     static func settingsGet() -> [String: Any] {
 diff --git a/scripts/templates/v3_unified_shell.swift b/scripts/templates/v3_unified_shell.swift
-index af07251..61453c0 100644
+index af07251..40b4c7c 100644
 --- a/scripts/templates/v3_unified_shell.swift
 +++ b/scripts/templates/v3_unified_shell.swift
 @@ -1354,6 +1354,11 @@ struct V3PromptSection: View {
@@ -144,3 +154,16 @@ index af07251..61453c0 100644
              }
              Section("About") {
                  Text("Sign-in runs entirely in this screen. Credentials and codes go to Apple through the SideStore service; no separate app opens.")
+@@ -2068,6 +2083,12 @@ struct V3AnisetteView: View {
+                 V3TextRow(store: store, title: "Custom Server URL", key: "textInputAnisetteURL")
+                 V3TextRow(store: store, title: "Custom Anisette URL Override", key: "customAnisetteURL")
+             }
++            Section("Apple Login Compatibility") {
++                Text("If Apple rejects sign-in, configure matching Client Info and User Agent for the Anisette provider. Existing keys and pairing are preserved.")
++                    .font(.caption).foregroundColor(.secondary)
++                V3TextRow(store: store, title: "Client Info", key: "customAnisetteClientInfo")
++                V3TextRow(store: store, title: "User Agent", key: "customAnisetteUserAgent")
++            }
+         }
+         .listStyle(.insetGrouped)
+         .navigationTitle("Anisette Servers")
