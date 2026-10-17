@@ -52,8 +52,6 @@ jobs:
             Dependencies/SideSign Dependencies/minimuxer
           swiftc -frontend -parse work/SideStore/SideStore/Core/DeviceApi/MinimuxerWrapper.swift
           git -C work/SideStore diff -- SideStore/Core/DeviceApi/MinimuxerWrapper.swift > artifacts/logs/transport-only.patch
-            artifacts/logs/coredevice-bridge-only.patch
-            artifacts/logs/coredevice-source-applied.json
       - name: Source-test modern Lockdown CoreDevice RSD bridge (no Apple auth changes)
         shell: bash
         run: |
