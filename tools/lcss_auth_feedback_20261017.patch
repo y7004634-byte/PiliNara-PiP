@@ -1,0 +1,146 @@
+diff --git a/scripts/templates/v3_headless_runtime.swift b/scripts/templates/v3_headless_runtime.swift
+index b24cd71..2569729 100644
+--- a/scripts/templates/v3_headless_runtime.swift
++++ b/scripts/templates/v3_headless_runtime.swift
+@@ -64,6 +64,8 @@ final class V3AuthCenter {
+         var watchdog: Task<Void, Never>?
+         var prompt: [String: Any]?
+         var attempts = 0
++        // Diagnostic-only: sanitized Apple/SideSign error code for the current session.
++        var lastAuthFailure: String?
+         var terminal: [String: Any]?
+         var deadline = Date.distantFuture
+     }
+@@ -115,17 +117,23 @@ final class V3AuthCenter {
+         guard let session = sessions[id] else { return nil }
+         if let terminal = session.terminal { return terminal.merging(["session": id]) { current, _ in current } }
+         if let prompt = session.prompt {
+-            return ["session": id, "state": "awaitingPrompt", "attempts": session.attempts, "prompt": prompt]
++            var reply: [String: Any] = ["session": id, "state": "awaitingPrompt", "attempts": session.attempts, "prompt": prompt]
++            if let failure = session.lastAuthFailure { reply["lastAuthFailure"] = failure }
++            return reply
+         }
+         return ["session": id, "state": "working", "attempts": session.attempts]
+     }
+ 
+     func respond(id: String, promptID: String, answer: [String: String]) -> [String: Any]? {
+         guard sessions[id] != nil else { return nil }
+-        sessions[id]?.attempts += 1
+-        guard V3HeadlessRuntime.shared.prompts.answer(promptID: promptID, answer: answer) else {
++        guard sessions[id]?.prompt?["id"] as? String == promptID,
++              V3HeadlessRuntime.shared.prompts.answer(promptID: promptID, answer: answer) else {
+             return ["session": id, "state": "promptExpired"]
+         }
++        sessions[id]?.attempts += 1
++        // Dismiss the answered prompt immediately, before the continued SideSign task resumes.
++        // Otherwise a stale credentials form can be submitted twice.
++        sessions[id]?.prompt = nil
+         return poll(id: id)
+     }
+ 
+@@ -239,7 +247,28 @@ final class V3HeadlessAuthHandler: SignInHandler, AnisetteServerHandler {
+         } catch { return .cancel }
+     }
+ 
+-    func handleSignInResult(_ result: Result<(ALTAccount, ALTAppleAPISession), Error>) async {}
++    func handleSignInResult(_ result: Result<(ALTAccount, ALTAppleAPISession), Error>) async {
++        let center = V3HeadlessRuntime.shared.auth
++        switch result {
++        case .success:
++            center.sessions[sessionID]?.lastAuthFailure = nil
++        case .failure(let error):
++            // SideStore retries credential collection after failed auth. Show only a
++            // numeric error code; never forward the raw description (may contain secrets).
++            let descriptions = [error.localizedDescription, String(describing: error)]
++            let reportedCode = descriptions.compactMap { description -> String? in
++                guard let range = description.range(
++                    of: #"(?<![0-9])-[0-9]{4,6}(?![0-9])"#,
++                    options: .regularExpression
++                ) else { return nil }
++                return String(description[range])
++            }.first
++            let nsError = error as NSError
++            let code = reportedCode ?? (nsError.code == 0 ? "unavailable" : String(nsError.code))
++            center.sessions[sessionID]?.lastAuthFailure =
++                "Sign-in attempt failed (code: \(code)). This does not prove the password is wrong. Check the authentication error before trying again."
++        }
++    }
+ 
+     func resolveTeam(_ teams: [ALTTeam]) async throws -> ALTTeam {
+         let answer = try await ask(kind: "team", title: "Select Team", message: "Choose the development team used for signing.",
+diff --git a/scripts/templates/v3_unified_shell.swift b/scripts/templates/v3_unified_shell.swift
+index af07251..61453c0 100644
+--- a/scripts/templates/v3_unified_shell.swift
++++ b/scripts/templates/v3_unified_shell.swift
+@@ -1354,6 +1354,11 @@ struct V3PromptSection: View {
+             if fieldDefs.count > 0 && options.isEmpty {
+                 Button("Submit") { submit(choice: "") }
+                     .buttonStyle(.borderedProminent)
++                    // An empty credentials prompt used to throw CancellationError and
++                    // trigger upstream SignInOperation.signOut() cleanup.
++                    .disabled(kind == "credentials" && (
++                        (fields["appleID"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
++                        (fields["password"] ?? "").isEmpty))
+             }
+             if isMulti {
+                 ForEach(options.filter { $0["id"] != "keep" && $0["id"] != "keepAll" }, id: \.self) { option in
+@@ -1419,6 +1424,8 @@ final class V3AuthStore: ObservableObject {
+     @Published var prompt: [String: Any]?
+     @Published var attempts = 0
+     @Published var message = ""
++    @Published var lastAuthFailure = ""
++    @Published var submitting = false
+     @Published var team = ""
+     private var session: String?
+     private var task: Task<Void, Never>?
+@@ -1432,6 +1439,7 @@ final class V3AuthStore: ObservableObject {
+         do {
+             state = "working"
+             message = ""
++            lastAuthFailure = ""
+             prompt = nil
+             let reply = try await V3ServiceBridge.shared.request(operation: "authBegin")
+             guard let id = reply["session"] as? String else {
+@@ -1459,6 +1467,7 @@ final class V3AuthStore: ObservableObject {
+     private func apply(_ reply: [String: Any]) {
+         state = reply["state"] as? String ?? state
+         attempts = reply["attempts"] as? Int ?? attempts
++        lastAuthFailure = reply["lastAuthFailure"] as? String ?? ""
+         prompt = reply["prompt"] as? [String: Any]
+         if state == "completed" {
+             team = reply["team"] as? String ?? ""
+@@ -1474,8 +1483,10 @@ final class V3AuthStore: ObservableObject {
+     }
+ 
+     func answer(promptID: String, answer: [String: String]) {
+-        guard let session else { return }
++        guard let session, !submitting else { return }
++        submitting = true
+         Task {
++            defer { submitting = false }
+             do {
+                 let reply = try await V3ServiceBridge.shared.request(operation: "authRespond", target: session,
+                     payload: ["prompt": promptID, "answer": answer])
+@@ -1548,9 +1559,9 @@ struct V3SignInView: View {
+                 }
+             }
+             if let prompt = auth.prompt {
+-                if auth.attempts > 1 && (prompt["kind"] as? String == "credentials") {
++                if !auth.lastAuthFailure.isEmpty && (prompt["kind"] as? String == "credentials") {
+                     Section {
+-                        Text("That was not accepted. Check the Apple ID and password, then submit again.")
++                        Text(auth.lastAuthFailure)
+                             .font(.footnote)
+                             .foregroundColor(.orange)
+                     }
+@@ -1558,6 +1569,10 @@ struct V3SignInView: View {
+                 V3PromptSection(prompt: prompt) { answer in
+                     auth.answer(promptID: prompt["id"] as? String ?? "", answer: answer)
+                 }
++                // Each authentication challenge gets fresh local field state;
++                // never carry a previous password into a new credentials prompt.
++                .id(prompt["id"] as? String ?? "")
++                .disabled(auth.submitting)
+             }
+             Section("About") {
+                 Text("Sign-in runs entirely in this screen. Credentials and codes go to Apple through the SideStore service; no separate app opens.")
