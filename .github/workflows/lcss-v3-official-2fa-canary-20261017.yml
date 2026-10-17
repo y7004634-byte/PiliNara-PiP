@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           git clone --depth 4 --branch research/581-lcss-v3-authfeedback-20261017 https://github.com/y7004634-byte/PiliNara-PiP.git userfix-repo
-          git -C userfix-repo cat-file -e f9ada10d2e7ff11b791c9ca3a18499cd84c22cd8^{commit}
+          test "$(git -C userfix-repo hash-object tools/lcss_auth_feedback_20261017.patch)" = "76bf27bdd24e0125236e8e2d702fba9daafc7f00"
 
       - name: Checkout pinned LiveContainer sources
         shell: bash
