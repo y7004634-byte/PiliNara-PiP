@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           git clone --depth 4 --branch research/581-lcss-v3-authfeedback-20261017 https://github.com/y7004634-byte/PiliNara-PiP.git userfix-repo
-          test "$(git -C userfix-repo hash-object tools/lcss_auth_feedback_20261017.patch)" = "76bf27bdd24e0125236e8e2d702fba9daafc7f00"
+          test "$(git -C userfix-repo hash-object tools/lcss_auth_feedback_20261017.patch)" = "1ed81490a523b5a5c9340fa58996a2c5b09c8599"
 
       - name: Checkout pinned LiveContainer sources
         shell: bash
@@ -506,6 +506,9 @@ jobs:
           git -C builder apply ../userfix-repo/tools/lcss_auth_feedback_20261017.patch
           grep -Fq 'lastAuthFailure' builder/scripts/templates/v3_headless_runtime.swift
           grep -Fq '.id(prompt["id"]' builder/scripts/templates/v3_unified_shell.swift
+          grep -Fq '"customAnisetteClientInfo", "customAnisetteUserAgent"' builder/scripts/templates/v3_headless_runtime.swift
+          grep -Fq 'V3TextRow(store: store, title: "Client Info", key: "customAnisetteClientInfo")' builder/scripts/templates/v3_unified_shell.swift
+          grep -Fq 'V3TextRow(store: store, title: "User Agent", key: "customAnisetteUserAgent")' builder/scripts/templates/v3_unified_shell.swift
           cp userfix-repo/tools/lcss_auth_feedback_20261017.patch artifacts/logs/host-auth-feedback.patch
           git -C builder diff --check
           # The sole SideSign update is SideStore/SideSign PR #5 (MERGED Oct 13).
