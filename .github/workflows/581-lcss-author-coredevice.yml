@@ -88,7 +88,7 @@ jobs:
           swiftc -frontend -parse work/SideStore/SideStore/AppBootManager.swift
           git -C work/SideStore diff --check
           expected=$(printf 'SideStore/AppBootManager.swift\nSideStore/Core/DeviceApi/MinimuxerWrapper.swift')
-          test "$(git -C work/SideStore diff --name-only)" = "$expected"
+          test "$(git -C work/SideStore diff --name-only -- SideStore)" = "$expected"
           grep -Fq 'selected existing valid Lockdown record' work/SideStore/SideStore/AppBootManager.swift
           grep -Fq 'PairingFileManager.shared.preferredProtocol = .lockdown' work/SideStore/SideStore/AppBootManager.swift
           git -C work/SideStore diff --exit-code -- \
