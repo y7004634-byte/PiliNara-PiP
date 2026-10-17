@@ -58,6 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           HOMEBREW_NO_AUTO_UPDATE=1 brew install ldid xcbeautify
+          python3 scripts/ci/workflow.py set-marketing-version '0.7.0-20261015.6+3990d5fb'
           python3 scripts/ci/workflow.py build \
             2>&1 | tee "$GITHUB_WORKSPACE/artifacts/logs/sidestore-build.log"
           test -s SideStore.ipa
