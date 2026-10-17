@@ -1,0 +1,70 @@
+name: 581 iLoader SMS 2FA + LiveProcess signing compatibility (isolated)
+on:
+  push:
+    branches:
+      - research/581-iloader-sms-only-signfix-20261017
+    paths:
+      - .github/workflows/581-iloader-sms-compat-20261017.yml
+permissions:
+  contents: read
+jobs:
+  windows-portable:
+    runs-on: windows-2022
+    timeout-minutes: 80
+    steps:
+      - name: Fetch pinned official iLoader 2.3.6 source
+        shell: pwsh
+        run: |
+          git clone --quiet --depth 1 --branch v2.3.6 https://github.com/nab138/iloader.git iloader-pinned
+          git -C iloader-pinned rev-parse HEAD | Out-File -FilePath ILOADER_SOURCE_SHA.txt -Encoding utf8
+          git -C iloader-pinned status --short
+      - name: Install Bun build environment
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install pinned package dependencies
+        working-directory: iloader-pinned
+        shell: pwsh
+        run: bun install --frozen-lockfile
+      - name: Apply one-dependency signing update (do not modify SMS code)
+        shell: pwsh
+        run: |
+          $path='iloader-pinned/src-tauri/Cargo.toml'
+          $raw=[IO.File]::ReadAllText((Resolve-Path $path))
+          $old='isideload = { version = "0.4.3", features = ["fs-storage"] }'
+          $new='isideload = { version = "=0.4.4", features = ["fs-storage"] }'
+          if (-not $raw.Contains($old)) {throw 'PIN CHECK FAILED: original manifest dependency does not match'}
+          [IO.File]::WriteAllText((Resolve-Path $path),$raw.Replace($old,$new))
+          git -C iloader-pinned diff -- src-tauri/Cargo.toml
+          cargo update --manifest-path iloader-pinned/src-tauri/Cargo.toml -p isideload --precise 0.4.4
+          $lock=Get-Content iloader-pinned/src-tauri/Cargo.lock -Raw
+          if ($lock -notmatch '(?s)\[\[package\]\]\s+name = "isideload"\s+version = "0\.4\.4"') {throw 'LOCK CHECK FAILED: isideload is not exactly 0.4.4'}
+          git -C iloader-pinned diff -- src-tauri/Cargo.toml src-tauri/Cargo.lock | Out-File -FilePath SIGNING_DIFF.txt -Encoding utf8
+      - name: Build Windows exe from official code
+        shell: pwsh
+        working-directory: iloader-pinned
+        run: bunx tauri build --no-bundle
+      - name: Verify executable and capture provenance
+        shell: pwsh
+        run: |
+          $exe='iloader-pinned/src-tauri/target/release/iloader.exe'
+          if (-not (Test-Path $exe)) {throw 'Missing expected portable executable'}
+          Copy-Item $exe 'iloader-v2.3.6-SMS-isideload0.4.4-Windows.exe'
+          Get-FileHash 'iloader-v2.3.6-SMS-isideload0.4.4-Windows.exe' -Algorithm SHA256 | Format-List | Out-File -FilePath EXE_SHA256.txt -Encoding utf8
+          $ver=Select-String -Path iloader-pinned/src-tauri/Cargo.lock -Pattern 'name = "isideload"' -Context 0,1
+          $ver | Out-File -FilePath ISIDELOAD_PIN.txt -Encoding utf8
+          Get-Item 'iloader-v2.3.6-SMS-isideload0.4.4-Windows.exe' | Select-Object Name,Length | Out-File -FilePath EXE_SIZE.txt -Encoding utf8
+          git -C iloader-pinned diff --name-only | Out-File -FilePath CHANGED_FILES.txt -Encoding utf8
+      - name: Upload unsigned test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: iloader-sms-only-isideload-0-4-4-windows-test
+          path: |
+            iloader-v2.3.6-SMS-isideload0.4.4-Windows.exe
+            ILOADER_SOURCE_SHA.txt
+            SIGNING_DIFF.txt
+            EXE_SHA256.txt
+            EXE_SIZE.txt
+            ISIDELOAD_PIN.txt
+            CHANGED_FILES.txt
+          retention-days: 7
