@@ -497,17 +497,6 @@ jobs:
           grep -Fq '"host_handoff": false' builder/scripts/patch_livecontainer_autorefresh.py
           grep -Fq 'defaults.set(false, forKey: hostHandoffKey)' builder/scripts/templates/livecontainer_refresh_scheduler.swift
 
-      - name: Apply userfix8 UI, localization, and shared IPA handoff fix
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 userfix-repo/tools/lcss_userfix7.py
-          grep -Fq 'liveContainerAutoRefreshProgress' builder/scripts/patch_livecontainer_autorefresh.py
-          grep -Fq 'Staged IPA URL is invalid.' builder/scripts/templates/v3_headless_runtime.swift
-          grep -Fq 'V3SharedIPAInbox' builder/scripts/templates/v3_unified_shell.swift
-          grep -Fq '安裝／側載 IPA' builder/scripts/templates/v3_unified_shell.swift
-          grep -Fq '排程刷新' builder/scripts/templates/livecontainer_refresh_settings.swift
-
       - name: Apply vetted original-source V3 auth feedback patch and official merged 2FA fix
         shell: bash
         run: |
@@ -535,6 +524,17 @@ jobs:
           python3 -m unittest discover -s builder/tests -p 'test_v3*.py' -q
           swiftc -frontend -parse builder/scripts/templates/v3_headless_runtime.swift
           swiftc -frontend -parse builder/scripts/templates/v3_unified_shell.swift
+
+      - name: Apply userfix8 UI, localization, and shared IPA handoff fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 userfix-repo/tools/lcss_userfix7.py
+          grep -Fq 'liveContainerAutoRefreshProgress' builder/scripts/patch_livecontainer_autorefresh.py
+          grep -Fq 'Staged IPA URL is invalid.' builder/scripts/templates/v3_headless_runtime.swift
+          grep -Fq 'V3SharedIPAInbox' builder/scripts/templates/v3_unified_shell.swift
+          grep -Fq '安裝／側載 IPA' builder/scripts/templates/v3_unified_shell.swift
+          grep -Fq '排程刷新' builder/scripts/templates/livecontainer_refresh_settings.swift
 
       - name: Apply and verify host integration
         shell: bash
