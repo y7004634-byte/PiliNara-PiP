@@ -1,0 +1,87 @@
+name: 581 Impactor Windows SMS Login Repair Preflight
+on:
+  push:
+    branches:
+      - research/581-iloader-sms-only-signfix-20261017
+    paths:
+      - .github/workflows/581-impactor-windows-authfix-20261017.yml
+permissions:
+  contents: read
+jobs:
+  windows-portable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 85
+    steps:
+      - name: Checkout isolated CI control
+        uses: actions/checkout@v4
+      - name: Checkout pinned official Impactor v2.7.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 --branch v2.7.0 https://github.com/claration/Impactor.git source-impactor
+          actual="$(git -C source-impactor rev-parse HEAD)"
+          test "$actual" = "56358d37358009067bdfb2649c6af53460845b90"
+          echo "$actual" > IMPACTOR_UPSTREAM_SHA.txt
+      - name: Apply precisely reviewed PR 288 Windows identity fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C source-impactor fetch --quiet --no-tags --depth=2 https://github.com/chrisoro/impactor.git 3e01ef6dd876a20fbcd03b92716ee3b37def8632
+          git -C source-impactor cherry-pick --no-commit FETCH_HEAD
+          git -C source-impactor diff --check
+          git -C source-impactor diff --name-only | LC_ALL=C sort > CHANGED_FILES.txt
+          cat > EXPECTED_FILES.txt <<'EOF'
+          3rdparty/omnisette/src/adi_proxy.rs
+          3rdparty/omnisette/src/lib.rs
+          3rdparty/omnisette/src/remote_anisette_v3.rs
+          apps/plumeimpactor/src/screen/settings.rs
+          crates/plume_core/src/auth/account/two_factor_auth.rs
+          crates/plume_core/src/developer/session.rs
+          crates/plume_core/src/lib.rs
+          EOF
+          LC_ALL=C sort -o EXPECTED_FILES.txt EXPECTED_FILES.txt
+          diff -u EXPECTED_FILES.txt CHANGED_FILES.txt
+          grep -Fq '<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>' source-impactor/3rdparty/omnisette/src/adi_proxy.rs
+          grep -Fq 'anisette_state_v2.plist' source-impactor/3rdparty/omnisette/src/lib.rs
+          git -C source-impactor diff > IMPACTOR_AUTHFIX.patch
+          sha256sum IMPACTOR_AUTHFIX.patch > DIFF_SHA256.txt
+      - name: Install official Windows cross-compile prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y mingw-w64 nasm
+      - name: Setup Rust stable for x86_64 Windows GNU
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: Build official-source patched Impactor Windows portable
+        working-directory: source-impactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --bins --workspace --release --target x86_64-pc-windows-gnu
+      - name: Verify binaries and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp source-impactor/target/x86_64-pc-windows-gnu/release/plumeimpactor.exe dist/Impactor-v2.7.0-WindowsSMS-authfix-TEST.exe
+          cp source-impactor/target/x86_64-pc-windows-gnu/release/plumesign.exe dist/plumesign-v2.7.0-WindowsSMS-authfix-TEST.exe
+          test -s dist/Impactor-v2.7.0-WindowsSMS-authfix-TEST.exe
+          sha256sum dist/*.exe > EXE_SHA256.txt
+          file dist/*.exe > EXE_FILE_TYPE.txt
+          rustc --version > TOOLCHAIN.txt
+      - name: Publish unsigned test binaries and exact diff (no Apple credentials)
+        uses: actions/upload-artifact@v4
+        with:
+          name: 581-impactor-v270-pr288-windows-x64-test
+          retention-days: 7
+          path: |
+            dist/*.exe
+            IMPACTOR_UPSTREAM_SHA.txt
+            IMPACTOR_AUTHFIX.patch
+            DIFF_SHA256.txt
+            CHANGED_FILES.txt
+            EXE_SHA256.txt
+            EXE_FILE_TYPE.txt
+            TOOLCHAIN.txt
