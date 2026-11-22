@@ -1,4 +1,4 @@
-name: Build PiliNara 2.2.0 Smart CDN Android arm64
+name: Build PiliNara 2.2.0 Smart CDN Android arm64 Traditional Chinese
 
 on:
   push:
@@ -22,13 +22,18 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Traditional Chinese compiler
+        run: python3 -m pip install --disable-pip-version-check opencc-python-reimplemented==0.1.7
       - name: Setup Flutter 3.47.9
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: 3.47.9
           cache: true
-      - name: Build Android 6234 arm64 APK
+      - name: Build Android 6235 arm64 APK
         run: |
           chmod +x build-android-220.sh
           ./build-android-220.sh
@@ -36,6 +41,6 @@ jobs:
         if: always()
         with:
           archive: false
-          name: PiliNara-Android-2.2.0-6234-TW-SmartCDN-arm64
-          path: PiliNara_android_2.2.0_6234_TW_SmartCDN_arm64-v8a.apk
+          name: PiliNara-Android-2.2.0-6235-TW-SmartCDN-arm64
+          path: PiliNara_android_2.2.0_6235_TW_SmartCDN_arm64-v8a.apk
           if-no-files-found: warn

@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT="$GITHUB_WORKSPACE"
 WORK="$RUNNER_TEMP/pilinara_android_220_smart"
 PIN="eca9c04eb59e596928b75213ea06c825d7e7fb25"
-OUT="PiliNara_android_2.2.0_6234_TW_SmartCDN_arm64-v8a.apk"
+OUT="PiliNara_android_2.2.0_6235_TW_SmartCDN_arm64-v8a.apk"
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
@@ -27,15 +27,16 @@ echo '[3/7] Apply shared feature patches + smart CDN + Android native remux'
 python3 "$ROOT/apply_qol_220.py" "$WORK/PiliNara"
 python3 "$ROOT/apply_smart_cdn_220.py" "$WORK/PiliNara"
 python3 "$ROOT/apply_android_port_220.py" "$WORK/PiliNara"
+python3 "$ROOT/localize_android_tw.py" "$WORK/PiliNara"
 python3 - <<'PY'
 from pathlib import Path
 import json, time
 p=Path('pubspec.yaml')
 s=p.read_text(encoding='utf-8')
 assert 'version: 2.2.0+1' in s
-p.write_text(s.replace('version: 2.2.0+1','version: 2.2.0+6234',1),encoding='utf-8')
+p.write_text(s.replace('version: 2.2.0+1','version: 2.2.0+6235',1),encoding='utf-8')
 Path('pili_release.json').write_text(json.dumps({
-    'pili.name': '2.2.0','pili.code': 6234,
+    'pili.name': '2.2.0','pili.code': 6235,
     'pili.hash': 'eca9c04eb59e596928b75213ea06c825d7e7fb25',
     'pili.time': int(time.time()),
 }),encoding='utf-8')
@@ -53,7 +54,7 @@ flutter test --no-pub test/smart_cdn_router_test.dart
 
 echo '[6/7] Build Android arm64 release APK'
 flutter build apk --release --target-platform android-arm64 --split-per-abi \
-  --build-name=2.2.0 --build-number=6234 \
+  --build-name=2.2.0 --build-number=6235 \
   --dart-define-from-file=pili_release.json --no-pub
 APK="build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
 test -s "$APK"
