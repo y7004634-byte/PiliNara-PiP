@@ -290,3 +290,47 @@ modify(
     "    if (normalVideo && _transientCdnFailoverStep == 0) {",
 )
 print("SMART_CDN_COMPATIBLE_ROUTES_PATCH_COMPLETE")
+
+
+# Critical: after changing the transient CDN route, playerInit must recreate the
+# media URL(s) from original signed candidates instead of reopening a stale URL.
+modify(
+    controller,
+    "    seek ??= getFirstSegment();\n"
+    "    await plPlayerController.setDataSource(",
+    """    seek ??= getFirstSegment();
+    if (!isFileSource) {
+      // The old failover only reinitialized the player with the SAME stale
+      // NetworkSource URL. Re-resolve all route-dependent URLs before reopen.
+      if (data.dash != null) {
+        videoUrl = VideoUtils.getCdnUrl(firstVideo.playUrls);
+        VideoUtils.scheduleSmartCdnProbe(firstVideo.playUrls);
+        final audios = data.dash!.audio;
+        if (audios != null && audios.isNotEmpty && currentAudioQa != null) {
+          final selectedAudio = audios.firstWhere(
+            (a) => a.id == currentAudioQa!.code,
+            orElse: () => audios.first,
+          );
+          audioUrl = VideoUtils.getCdnUrl(
+            selectedAudio.playUrls,
+            isAudio: true,
+          );
+        }
+      } else if (data.durl case final durl? when durl.isNotEmpty) {
+        if (durl.length > 1) {
+          final sb = StringBuffer('edl://!no_chapters;');
+          for (final item in durl) {
+            final url = VideoUtils.getCdnUrl(item.playUrls);
+            sb.write('%${url.length}%$url,length=${item.length! / 1000};');
+          }
+          videoUrl = sb.toString();
+        } else {
+          videoUrl = VideoUtils.getCdnUrl(durl.single.playUrls);
+          VideoUtils.scheduleSmartCdnProbe(durl.single.playUrls);
+        }
+        audioUrl = '';
+      }
+    }
+    await plPlayerController.setDataSource(""",
+)
+print("SMART_CDN_REINITIALIZE_USES_NEW_URL_PASS")
