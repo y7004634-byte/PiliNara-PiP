@@ -37,6 +37,8 @@ glossary = sorted(tw.items(), key=lambda x: len(x[0]), reverse=True)
 special = re.compile(r"(?:\\(?:u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.))|(?:\$\{[^{}]*\}|\$[A-Za-z_]\w*)",re.S)
 map_key = re.compile(r"^\s*:(?!:)")
 comparison = re.compile(r"(?:==|!=|=>\s*case|\bcase)\s*$")
+method_match = re.compile(r"\.(?:contains|startsWith|endsWith|replaceAll|replaceFirst|split|indexOf|lastIndexOf|matchAsPrefix)\s*\(\s*$")
+index_key = re.compile(r"\[\s*$")
 dangerous_line = re.compile(r"(?:\bRegExp\s*\(|\bjson(?:Decode|Encode)\s*\(|\bsetProperty\s*\(|\bMethodChannel\s*\()",re.I)
 dangerous_body = re.compile(r"(?i)(?:https?://|[\\/](?:assets|api|v1|v2|grpc)/|\.(?:jpg|png|webp|svg|json|yaml|xml|ttf|html|mp4|m4a|dart)$)")
 
@@ -97,7 +99,10 @@ def translate_expression(src):
     for start,end,body,q in string_literals(src):
         before=src[src.rfind('\n',0,q)+1:q]
         after=src[end+1:]
-        if map_key.match(after) or comparison.search(before):continue
+        if (map_key.match(after) and not re.search(r'\?\s*$',before)) or comparison.search(before):continue
+        if method_match.search(before) or dangerous_line.search(before):continue
+        if index_key.search(before) and re.match(r'^\s*\]',after):continue
+        if dangerous_body.search(body):continue
         updated=translate(body)
         if updated!=body:edits.append((start,end,updated))
     result=src
@@ -187,8 +192,14 @@ def rewrite(p,root,audit):
         if end_line<0:end_line=len(src)
         pre=src[line_start:opening]
         post=src[b+1:end_line]
-        if map_key.match(post):skip['map_key']+=1;continue
+        if map_key.match(post) and not re.search(r'\?\s*$',pre):
+            skip['map_key']+=1;continue
         if comparison.search(pre):skip['comparison']+=1;continue
+        # Chinese text can also be a Bilibili response token or JSON index;
+        # such values must never be translated as though they were UI labels.
+        if method_match.search(pre):skip['predicate_or_replace']+=1;continue
+        if index_key.search(pre) and re.match(r'^\s*\]',post):
+            skip['index_key']+=1;continue
         if dangerous_line.search(pre):skip['code_context']+=1;continue
         if dangerous_body.search(body):skip['resource_path']+=1;continue
         converted=translate(body)
