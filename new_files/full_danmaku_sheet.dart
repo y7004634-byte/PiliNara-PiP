@@ -266,7 +266,6 @@ class _FullDanmakuListSheetState extends State<_FullDanmakuListSheet> {
           Navigator.of(context).pop();
           widget.playerController.seekTo(
             Duration(milliseconds: item.progress),
-            isSeek: false,
           );
         },
         child: Container(
