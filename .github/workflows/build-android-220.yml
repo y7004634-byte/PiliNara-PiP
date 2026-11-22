@@ -1,0 +1,41 @@
+name: Build PiliNara 2.2.0 Smart CDN Android arm64
+
+on:
+  push:
+    branches: [migration-2.2.0-android]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle*
+            android/**/gradle-wrapper.properties
+      - name: Setup Flutter 3.47.9
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.9
+          cache: true
+      - name: Build Android 6234 arm64 APK
+        run: |
+          chmod +x build-android-220.sh
+          ./build-android-220.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          archive: false
+          name: PiliNara-Android-2.2.0-6234-TW-SmartCDN-arm64
+          path: PiliNara_android_2.2.0_6234_TW_SmartCDN_arm64-v8a.apk
+          if-no-files-found: warn
