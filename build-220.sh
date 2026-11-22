@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT="$GITHUB_WORKSPACE"
 WORK="$RUNNER_TEMP/pilinara_220_custom"
 PIN="eca9c04eb59e596928b75213ea06c825d7e7fb25"
-OUT="PiliNara_ios_2.2.0_6232_TW_Custom_UNSIGNED.ipa"
+OUT="PiliNara_ios_2.2.0_6233_TW_SmartCDN_UNSIGNED.ipa"
 rm -rf "$WORK"
 mkdir -p "$WORK"
 echo "[1/7] Clone exact author 2.2.0 source"
@@ -17,8 +17,11 @@ cp "$ROOT/new_files/playback_diagnostics_hud.dart" lib/plugin/pl_player/view/
 cp "$ROOT/new_files/universal_media_export.dart" lib/pages/video/export/
 cp "$ROOT/new_files/universal_export_view.dart" lib/pages/download/
 cp "$ROOT/new_files/pilinara_native_bridge.dart" lib/utils/
+cp "$ROOT/new_files/smart_cdn_router.dart" lib/utils/
+cp "$ROOT/new_files/smart_cdn_router_test.dart" test/smart_cdn_router_test.dart
 echo "[3/7] Apply version-specific source patches"
 python3 "$ROOT/apply_qol_220.py" "$WORK/PiliNara"
+python3 "$ROOT/apply_smart_cdn_220.py" "$WORK/PiliNara"
 tail -n +5 "$ROOT/new_files/PiliNaraNativeBridge.swift" >> ios/Runner/AppDelegate.swift
 python3 - <<'PY'
 from pathlib import Path
@@ -26,9 +29,9 @@ import json, time
 p=Path('pubspec.yaml')
 s=p.read_text(encoding='utf-8')
 assert 'version: 2.2.0+1' in s
-p.write_text(s.replace('version: 2.2.0+1', 'version: 2.2.0+6232',1),encoding='utf-8')
+p.write_text(s.replace('version: 2.2.0+1', 'version: 2.2.0+6233',1),encoding='utf-8')
 Path('pili_release.json').write_text(json.dumps({
- 'pili.name': '2.2.0', 'pili.code': 6232,
+ 'pili.name': '2.2.0', 'pili.code': 6233,
  'pili.hash': 'eca9c04eb59e596928b75213ea06c825d7e7fb25',
  'pili.time': int(time.time())
 }),encoding='utf-8')
@@ -41,9 +44,10 @@ echo "[4/7] Apply upstream iOS and Flutter framework patches"
   pwsh -File lib/scripts/patch.ps1 iOS
 )
 cd "$WORK/PiliNara"
-echo "[5/7] Build unsigned iOS Runner.app"
+echo "[5/7] Run smart CDN policy tests and build unsigned iOS Runner.app"
+flutter test --no-pub test/smart_cdn_router_test.dart
 set +e
-flutter build ios --release --no-codesign --build-name=2.2.0 --build-number=6232 --dart-define-from-file=pili_release.json --no-pub
+flutter build ios --release --no-codesign --build-name=2.2.0 --build-number=6233 --dart-define-from-file=pili_release.json --no-pub
 code=$?
 set -e
 APP_BUNDLE="build/ios/iphoneos/Runner.app"
