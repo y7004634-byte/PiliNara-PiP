@@ -1,0 +1,32 @@
+name: Build PiliNara 2.2.0 Custom zh-TW iOS
+
+on:
+  push:
+    branches: [migration-2.2.0]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Flutter 3.47.9
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.9
+      - name: Build migrated unsigned IPA
+        run: |
+          chmod +x build-220.sh
+          ./build-220.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          archive: false
+          name: PiliNara-2.2.0-6232-TW-Custom
+          path: PiliNara_ios_2.2.0_6232_TW_Custom_UNSIGNED.ipa
+          if-no-files-found: warn
