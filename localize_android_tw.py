@@ -20,6 +20,7 @@ tw = {
     "音訊輸出設備": "音訊輸出裝置",
     "音頻輸出設備": "音訊輸出裝置",
     "視頻同步": "影片同步", "視訊同步": "影片同步",
+    "音視頻": "影音", "音影片": "影音",
     "首選解碼格式": "偏好解碼格式",
     "啟用軟解": "啟用軟體解碼",
     "任意可用": "任何可用",
@@ -32,6 +33,10 @@ tw = {
     "菜單": "選單", "字體": "字型", "屏蔽": "封鎖",
     "設置": "設定", "當前": "目前", "保存": "儲存",
     "確定": "確定", "連結": "連結",
+    "賬號": "帳號", "後臺": "背景", "前臺": "前景",
+    "全屏": "全螢幕", "橫屏": "橫向", "屏幕": "螢幕",
+    "字號": "字體大小", "點擊": "點選",
+    "默認": "預設", "默許": "預設",
 }
 glossary = sorted(tw.items(), key=lambda x: len(x[0]), reverse=True)
 special = re.compile(r"(?:\\(?:u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.))|(?:\$\{[^{}]*\}|\$[A-Za-z_]\w*)",re.S)
@@ -167,6 +172,7 @@ def string_literals(text):
 
 def in_scope(p,root):
     parts=p.relative_to(root).parts
+    if p.relative_to(root).as_posix()=='lib/main.dart':return True
     if len(parts)<3 or parts[0]!='lib':return False
     # Source-only display descriptions used directly by the screenshot's
     # hardware-decoder selector and CDN picker. Hosts/IDs contain no Chinese.
@@ -174,6 +180,28 @@ def in_scope(p,root):
         ('pl_player','models','hwdec_type.dart'),
         ('common','video','cdn_type.dart'),
     ):return True
+    # These enums/models carry menus, titles, quality descriptions and labels
+    # in runtime widget data even though they are outside /pages.
+    if parts[1]=='models' and parts[2]=='common':
+        return True
+    if rel_path := p.relative_to(root).as_posix():
+        if rel_path in {
+            'lib/main.dart',
+            'lib/common/dial_prefix.dart',
+            'lib/common/skeleton/dynamic_card.dart',
+            'lib/models_new/download/bili_download_entry_info.dart',
+            'lib/plugin/pl_player/controller.dart',
+            'lib/plugin/linux_webview.dart',
+            'lib/utils/accounts/account_manager/account_mgr.dart',
+            'lib/utils/config_archive.dart',
+            'lib/utils/image_utils.dart',
+            'lib/utils/reply_utils.dart',
+            'lib/services/shutdown_timer_service.dart',
+            'lib/http/error_msg.dart',
+        }:
+            return True
+    if parts[1]=='plugin' and parts[2:4]==('pl_player','models'):
+        return True
     if parts[1] not in ('pages','plugin','utils','common'):return False
     if any(x in ('grpc','http','generated','bindings','native','ffi','proto') for x in parts):return False
     if parts[1]=='plugin' and not ('view' in parts or 'widgets' in parts):return False

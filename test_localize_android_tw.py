@@ -67,5 +67,39 @@ class TraditionalChineseTest(unittest.TestCase):
         self.assertIn("'自動同步\\n影片同步'", after)
         self.assertEqual(number, 1)
 
+    def test_setting_titles_are_included_outside_page_folder(self):
+        from localize_android_tw import in_scope
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            p = root / "lib/models/common/setting_type.dart"
+            p.parent.mkdir(parents=True)
+            p.write_text("enum Settings { privacy('隐私设置'), video('音视频设置'); }",
+                         encoding="utf-8")
+            self.assertTrue(in_scope(p, root))
+            count, _, _ = rewrite(p, root, audit=False)
+            result = p.read_text(encoding="utf-8")
+            self.assertEqual(count, 2)
+            self.assertIn("'隱私設定'", result)
+            self.assertIn("'影音設定'", result)
+
+    def test_app_locale_uses_taiwan_not_hardcoded_china(self):
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            p=root/"lib/main.dart"
+            p.parent.mkdir(parents=True)
+            p.write_text(
+                '      locale: const Locale("zh", "CN"),\n'
+                '      fallbackLocale: const Locale("zh", "CN"),\n'
+                '      supportedLocales: const [Locale("zh", "CN"), Locale("en", "US")],\n',
+                encoding="utf-8")
+            patch=Path(__file__).with_name("apply_android_tw_locale_220.py")
+            subprocess.run([sys.executable, str(patch), str(root)], check=True,
+                           capture_output=True, text=True)
+            text=p.read_text(encoding="utf-8")
+            self.assertEqual(text.count('Locale("zh", "TW")'), 3)
+            self.assertNotIn('Locale("zh", "CN")',text)
+
 if __name__ == '__main__':
     unittest.main()
