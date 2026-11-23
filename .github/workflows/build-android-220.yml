@@ -35,7 +35,7 @@ jobs:
           channel: stable
           flutter-version: 3.47.9
           cache: true
-      - name: Build Android 6236 arm64 APK
+      - name: Build Android 6237 arm64 APK
         run: |
           chmod +x build-android-220.sh
           ./build-android-220.sh
@@ -43,6 +43,6 @@ jobs:
         if: always()
         with:
           archive: false
-          name: PiliNara-Android-2.2.0-6236-TW-SmartCDN-arm64
-          path: PiliNara_android_2.2.0_6236_TW_SmartCDN_arm64-v8a.apk
+          name: PiliNara-Android-2.2.0-6237-TW-SmartCDN-Recovery-arm64
+          path: PiliNara_android_2.2.0_6237_TW_SmartCDN_Recovery_arm64-v8a.apk
           if-no-files-found: warn
